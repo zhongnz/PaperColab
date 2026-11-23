@@ -9,6 +9,7 @@ const upstream = resolve(process.argv[2]);
 const require = createRequire(import.meta.url);
 const { LoroDoc, LoroText } = await import(pathToFileURL(join(upstream,'web/papercolab-loro.mjs')));
 const load = name => import(pathToFileURL(join(upstream, 'web/src/lib', name + '.js')));
+const {cursorAt} = await load('loro-cursor');
 const anchors = await load('anchors'), tracking = await load('track-changes');
 require('../../web/vendor/latex.min.js');
 require('../../web/blocks.js');
@@ -22,7 +23,7 @@ const doc = new LoroDoc(), fileId = crypto.randomUUID();
 doc.getMap('files').setContainer(fileId, new LoroText()).insert(0, original);
 doc.getMap('paths').set(fileId,filename);
 doc.commit();
-const make = (d, author) => cellSession({doc:d, fileId, model:PaperColabBlocks, anchors, tracking, actor:{who:author,author}});
+const make = (d, author) => cellSession({doc:d, fileId, model:PaperColabBlocks, anchors, cursorAt, tracking, actor:{who:author,author}});
 const alice = make(doc,'Alice');
 const paragraph = alice.parse().blocks.find(b=>b.kind==='paragraph');
 const heading = alice.parse().blocks.find(b=>b.kind==='heading');
@@ -37,6 +38,10 @@ function sync(d) {
   doc.import(d.export({mode:'update',from:doc.oplogVersion()}));
   d.import(doc.export({mode:'update',from:d.oplogVersion()}));
 }
+const boundaryPeer = make(peer(),'Dana');
+const edge = boundaryPeer.read(cell);
+boundaryPeer.markup(edge, 'Prefix '+edge.source+' End.');
+assert.equal(boundaryPeer.read(cell)?.source,'Prefix '+edge.source+' End.');
 const before = alice.read(cell), rich = structuredClone(before.block.rich);
 rich.content[0].content[0].text = rich.content[0].content[0].text.replace('fictional','coastal');
 const ids = alice.visual(before,rich);

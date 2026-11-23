@@ -1,4 +1,5 @@
 import {LoroDoc,LoroText} from '../../build/upstream/web/src/lib/loro-web.js';
+import {cursorAt} from '../../build/upstream/web/src/lib/loro-cursor.js';
 import * as anchors from '../../build/upstream/web/src/lib/anchors.js';
 import * as tracking from '../../build/upstream/web/src/lib/track-changes.js';
 import {cellSession} from './cells.mjs';
@@ -8,7 +9,7 @@ const a = new LoroDoc(), b = new LoroDoc(), fileId = crypto.randomUUID();
 a.getMap('files').setContainer(fileId,new LoroText()).insert(0,source);
 a.getMap('paths').set(fileId,'sections/methods.tex');
 a.commit();
-const session = (doc,author) => cellSession({doc,fileId,anchors,tracking,model:PaperColabBlocks,actor:{who:author,author}});
+const session = (doc,author) => cellSession({doc,fileId,anchors,cursorAt,tracking,model:PaperColabBlocks,actor:{who:author,author}});
 const first = session(a,'Alice');
 const cells = first.parse().blocks.filter(block=>block.rich).map(block=>({id:first.attach(block),label:block.kind}));
 b.import(a.export({mode:'snapshot'}));

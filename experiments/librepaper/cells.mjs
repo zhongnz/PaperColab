@@ -1,5 +1,5 @@
 // The host supplies the active LibrePaper document, editor identity and pinned upstream modules.
-export function cellSession({ doc, fileId, root = false, model, anchors, tracking, actor }) {
+export function cellSession({ doc, fileId, root = false, model, anchors, cursorAt, tracking, actor }) {
   const memory = new anchors.MoveMemory();
   const body = () => doc.getMap('files').get(fileId).toString();
   const parse = () => model.parseFile(body(), { root });
@@ -51,7 +51,24 @@ export function cellSession({ doc, fileId, root = false, model, anchors, trackin
     while (right < a.length-left && right < b.length-left && a[a.length-1-right] === b[b.length-1-right]) right++;
     const from = live.block.from + a.slice(0,left).join('').length;
     const to = live.block.to - a.slice(a.length-right).join('').length;
-    return write([{from, to, insert:b.slice(left,b.length-right).join('')}], tracked);
+    const ids = write([{from, to, insert:b.slice(left,b.length-right).join('')}], tracked);
+    // An intentional prefix/suffix edit can place new text outside the old range.
+    // Extend this cell's live endpoints only when the parser confirms the exact
+    // new block at the known start. Keep the original quote and ID for review.
+    if (!read(live.id) && next.length) {
+      const start = live.block.from, end = start + next.length;
+      const match = parse().blocks.some(block => block.from === start && block.to === end && block.kind === live.block.kind);
+      if (match) {
+        const text = doc.getMap('files').get(fileId);
+        const first = cursorAt(text,start,-1);
+        const last = cursorAt(text,end-Array.from(next).at(-1).length,1);
+        if (first && last) {
+          doc.getMap(anchors.ANCHORS).get(live.id).set('place',{file:fileId,start:first.encode(),end:last.encode()});
+          doc.commit({origin:anchors.ANCHORS_ORIGIN});
+        }
+      }
+    }
+    return ids;
   }
   const visual = (snapshot, rich) => update(snapshot, live => model.editVisual(live.file, live.block, rich), true);
   const markup = (snapshot, source) => update(snapshot, live => model.editSource(live.file, live.block, source), false);

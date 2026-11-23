@@ -34,3 +34,21 @@ jobs:
       - run: python experiments/librepaper/browser.py
       - run: docker pull texlive/texlive:TL2025-historic
       - run: python3 scripts/check_build.py --root estuary/main.tex --pdf build/edited.pdf build/edited.zip
+      - name: Package the tested browser trial
+        run: |
+          mkdir -p build/trial/{experiments/librepaper,web/vendor,examples/estuary/sections,build/cell-demo,licences}
+          cp experiments/librepaper/demo.html build/trial/experiments/librepaper/
+          cp web/{blocks.js,editors.js,styles.css} build/trial/web/
+          cp web/vendor/{engines.min.js,latex.min.js,editor-NOTICES.txt} build/trial/web/vendor/
+          cp examples/estuary/sections/methods.tex build/trial/examples/estuary/sections/
+          cp build/cell-demo/{app.js,*.wasm} build/trial/build/cell-demo/
+          cp LICENSE build/trial/licences/PaperColab.txt
+          cp build/upstream/LICENSE build/trial/licences/LibrePaper.txt
+          cp build/deps/node_modules/loro-crdt/LICENSE* build/trial/licences/
+          cp experiments/librepaper/START.txt build/trial/
+          cd build/trial
+          zip -qr ../PaperColab-LibrePaper-Cells.zip .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: PaperColab-LibrePaper-Cells
+          path: build/PaperColab-LibrePaper-Cells.zip
