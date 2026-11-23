@@ -1,0 +1,14 @@
+PaperColab + LibrePaper manuscript cells
+
+Extract the entire ZIP. Open a terminal in the extracted folder and run
+
+    python -m http.server 8000 --bind 127.0.0.1
+
+On systems where Python 3 is called python3, use python3 instead.
+Visit http://127.0.0.1:8000/experiments/librepaper/demo.html
+
+Edit a word inside the paragraph in Alice's visual pane, then choose Apply edit.
+Bob sees the LaTeX change. Edit an interior word in his source pane and apply
+it to see the visual view update. Select different cells or switch sync off
+and on to try disconnected work. Both collaborators live on this device.
+Reloading starts a new trial. Stop the local server with Ctrl+C.

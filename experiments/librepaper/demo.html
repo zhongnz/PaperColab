@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PaperColab · LibrePaper cell trial</title><link rel="stylesheet" href="../../web/styles.css">
+<style>
+main{padding-block:32px}h1{font-size:2.6rem}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:18px 0}#panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:18px}
+article{border:1px solid var(--line);border-radius:6px;padding:20px;background:#fffefa;min-width:0}article h2{font-size:1.5rem}article select{margin:6px 0 14px}.surface{border:1px solid var(--line);margin:10px 0;min-height:100px}.visual-prose{min-height:100px}.cm-editor{min-height:100px}
+</style>
+<main><h1>Manuscript cells</h1><p>Two local collaborators share a copy of the Estuary manuscript. Select the same cell to compare both editing modes.</p>
+<div class="controls"><label><input id="connected" type="checkbox" checked> Sync collaborators</label><span id="status" role="status">Loading manuscript…</span></div>
+<div id="panes"></div></main>
+<script src="../../web/vendor/latex.min.js"></script><script src="../../web/vendor/engines.min.js"></script><script src="../../web/blocks.js"></script><script src="../../web/editors.js"></script><script type="module" src="../../build/cell-demo/app.js"></script></html>
