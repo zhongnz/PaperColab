@@ -1,0 +1,123 @@
+"""Edit through the real visual/source panes offline and compare the exported project bytes."""
+import argparse
+import io
+from pathlib import Path
+import shutil
+import sys
+import tempfile
+import zipfile
+
+from playwright.sync_api import expect, sync_playwright
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from package import demo_zip, single_html
+
+
+def read_files(data):
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        assert archive.testzip() is None
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+def exercise(browser, uri, width, screenshots, output_zip):
+    context = browser.new_context(viewport={"width": width, "height": 900}, offline=True, accept_downloads=True)
+    page = context.new_page()
+    errors, remote = [], []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("request", lambda r: remote.append(r.url) if r.url.startswith(("http:", "https:")) else None)
+    page.goto(uri)
+    page.get_by_role("button", name="Open example editor", exact=True).click()
+    visual = page.get_by_role("textbox", name="Visual block text")
+    code = page.locator("#source-surface .cm-content")
+    export = page.get_by_role("button", name="Export project ZIP")
+    expect(visual).to_contain_text("two readings")
+    expect(page.locator("#editor-file")).to_have_value("estuary/sections/methods.tex")
+    with page.expect_download() as unchanged:
+        export.click()
+    assert unchanged.value.path().read_bytes() == demo_zip()
+
+    visual.click()
+    visual.press("Control+Home")
+    page.keyboard.insert_text("Replicate samples. ")
+    expect(code).to_contain_text("Replicate samples.")
+    page.get_by_role("button", name="Undo", exact=True).click()
+    expect(visual).not_to_contain_text("Replicate samples.")
+    expect(page.locator("#edit-count")).to_have_text("Original manuscript")
+    page.get_by_role("button", name="Redo", exact=True).click()
+    expect(visual).to_contain_text("Replicate samples.")
+    expect(visual.locator(".tex-token")).to_have_text(r"\cite{fieldguide}")
+
+    if screenshots:
+        page.screenshot(path=screenshots / f"editor-{width}.png", full_page=True)
+    for selector in ["main", ".outline", ".sheet", "#visual-surface", "#source-surface"]:
+        rect = page.locator(selector).bounding_box()
+        assert rect and 0 <= rect["x"] and rect["x"] + rect["width"] <= width + 1, selector
+
+    page.locator("#block-list button").filter(has_text="Sampling method").click()
+    code.click()
+    code.press("Control+a")
+    page.keyboard.insert_text(r"\section{Revised sampling}")
+    expect(export).to_be_disabled()
+    page.get_by_role("button", name="Apply source").click()
+    expect(visual).to_have_text("Revised sampling")
+    expect(page.locator("#edit-count")).to_have_text("2 edited blocks")
+    code.click()
+    code.press("Control+a")
+    page.keyboard.insert_text(r"\unknown{invalid}")
+    page.get_by_role("button", name="Apply source").click()
+    expect(page.locator("#edit-message")).to_contain_text("Keep one supported")
+    expect(page.locator("#editor-file")).to_be_disabled()
+    page.get_by_role("button", name="Discard draft").click()
+    expect(code).to_have_text(r"\section{Revised sampling}")
+
+    page.locator("#block-list button").filter(has_text="tabular").click()
+    expect(code).to_have_attribute("aria-readonly", "true")
+    expect(code).to_contain_text(r"\bottomrule")
+    expect(visual).to_have_count(0)
+    page.get_by_role("button", name="Archive report").click()
+    page.get_by_role("button", name="Edit manuscript").click()
+    expect(visual).to_contain_text("Replicate samples.")
+    with page.expect_download() as changed:
+        export.click()
+    data = changed.value.path().read_bytes()
+    before, after = read_files(demo_zip()), read_files(data)
+    assert list(before) == list(after)
+    name = "estuary/sections/methods.tex"
+    for path in before:
+        if path != name:
+            assert before[path] == after[path], path
+    old, new = before[name].split(b"\\begin{tabular}"), after[name].split(b"\\begin{tabular}")
+    assert old[1] == new[1]
+    assert new[0].startswith(b"\\section{Revised sampling}\nReplicate samples. ")
+    assert b"protocol~\\cite{fieldguide}" in new[0]
+    if output_zip:
+        output_zip.parent.mkdir(exist_ok=True, parents=True)
+        output_zip.write_bytes(data)
+    page.get_by_role("button", name="Revert block").click()
+    expect(visual).not_to_contain_text("Replicate samples.")
+    expect(page.locator("#edit-count")).to_have_text("1 edited block")
+    assert not remote, remote
+    assert not errors, errors
+    context.close()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--screenshots", type=Path)
+    parser.add_argument("--output-zip", type=Path)
+    args = parser.parse_args()
+    if args.screenshots:
+        args.screenshots.mkdir(exist_ok=True, parents=True)
+    with tempfile.TemporaryDirectory() as temp, sync_playwright() as playwright:
+        single = Path(temp) / "PaperColab.html"
+        single.write_text(single_html(), encoding="utf-8")
+        chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+        browser = playwright.chromium.launch(executable_path=chrome)
+        for path in [ROOT / "web/index.html", single]:
+            for width in [1440, 390]:
+                exercise(browser, path.as_uri(), width, args.screenshots if path == single else None,
+                         args.output_zip if path == single and width == 1440 else None)
+        browser.close()
+    print("Visual/source edits and exact exports verified offline at two widths and both entry points.")

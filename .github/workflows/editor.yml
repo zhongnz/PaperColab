@@ -16,11 +16,5 @@ jobs:
           node-version: '24'
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build:vendor
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: editor-libraries
-          path: |
-            package-lock.json
-            web/vendor/engines.min.js
-            web/vendor/latex.min.js
-            web/vendor/editor-NOTICES.txt
+      - name: Confirm checked-in bundles and licence notices match the lockfile
+        run: git diff --exit-code -- web/vendor

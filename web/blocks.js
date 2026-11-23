@@ -116,7 +116,7 @@
       add('raw', 0, original.length, { label: 'Original source', reason });
       return { original, blocks, edits: new Map() };
     };
-    if (text.length > 512 * 1024) return rawFile('This file exceeds the visual editor’s 512 KiB text limit.');
+    if (new TextEncoder().encode(original).length > 512 * 1024) return rawFile('This file exceeds the visual editor’s 512 KiB text limit.');
     if (/\\(?:catcode|obeylines|obeyspaces|ExplSyntaxOn)\b/.test(text)) return rawFile('This file changes how TeX reads source characters.');
     let ast;
     try { ast = PaperColabLatex.LatexPegParser.parse(text); }
