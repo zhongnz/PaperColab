@@ -69,7 +69,8 @@
           const bytes = new Uint8Array(size);
           let offset = 0;
           for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-          try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+          // Keep a UTF-8 BOM inside the string so patching another span preserves its bytes.
+          try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
           catch { skipped = 'Text is not UTF-8.'; }
         } else if (isText(path)) { skipped = 'Text exceeds the 4 MiB per-file inspection limit.'; }
         files.set(path, { size, text, skipped });
@@ -79,5 +80,43 @@
       await reader.close();
     }
   }
-  globalThis.PaperColabArchive = { readArchive, isConversation };
+  // Only called on the original Blob already verified by readArchive. Unedited ZIP
+  // members retain their compressed payload. An untouched archive is returned verbatim.
+  async function exportArchive(blob, changes) {
+    if (!changes.size) return blob;
+    const reader = new zip.ZipReader(new zip.BlobReader(blob), { useWebWorkers: false });
+    const writer = new zip.ZipWriter(new zip.BlobWriter('application/zip'), { useWebWorkers: false });
+    const written = new Set();
+    let total = 0;
+    try {
+      for await (const entry of reader.getEntriesGenerator()) {
+        const name = entry.filename.replace(/^(?:\.\/)+/, '');
+        const options = { directory: entry.directory, comment: entry.comment, lastModDate: entry.lastModDate,
+          externalFileAttributes: entry.externalFileAttributes, versionMadeBy: entry.versionMadeBy };
+        if (entry.directory) {
+          await writer.add(entry.filename, undefined, options);
+        } else if (changes.has(name)) {
+          if (!/\.(?:tex|ltx)$/i.test(name)) throw new Error('Only LaTeX source files can be edited.');
+          const bytes = new TextEncoder().encode(changes.get(name));
+          if (bytes.length > limits.text) throw new Error('An edited source exceeds the 4 MiB text limit.');
+          total += bytes.length;
+          await writer.add(entry.filename, new zip.Uint8ArrayReader(bytes), options);
+          written.add(name);
+        } else {
+          total += entry.uncompressedSize;
+          const compressed = await entry.getData(new zip.BlobWriter(), { passThrough: true });
+          await writer.add(entry.filename, new zip.BlobReader(compressed), { ...options, passThrough: true,
+            compressionMethod: entry.compressionMethod, uncompressedSize: entry.uncompressedSize, signature: entry.signature });
+        }
+        if (total > limits.expanded) throw new Error('Edited project exceeds the expanded archive limit.');
+      }
+      if (written.size !== changes.size) throw new Error('An edited source was not present in the original archive.');
+      const output = await writer.close(reader.comment);
+      if (output.size > limits.archive) throw new Error('Edited project exceeds the 64 MiB ZIP limit.');
+      return output;
+    } finally {
+      await reader.close();
+    }
+  }
+  globalThis.PaperColabArchive = { readArchive, exportArchive, isConversation };
 })();
