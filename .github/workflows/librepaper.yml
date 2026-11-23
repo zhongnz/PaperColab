@@ -1,0 +1,28 @@
+name: LibrePaper cell compatibility
+on: [pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  cells:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: LibrePaper/librepaper
+          ref: c74c348d926d9b06f54da52ffb2ea18141267ba5
+          path: build/upstream
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - run: npm install --prefix build/deps --ignore-scripts --no-audit --no-fund loro-crdt@1.16.1
+      - run: ln -s "$PWD/build/deps/node_modules" build/upstream/web/node_modules
+      - run: echo "export {LoroDoc, LoroText} from 'loro-crdt'" > build/upstream/web/papercolab-loro.mjs
+      - run: python3 scripts/package.py --zip build/input.zip
+      - run: node experiments/librepaper/trial.mjs build/upstream build/input.zip build/edited.zip
+      - run: docker pull texlive/texlive:TL2025-historic
+      - run: python3 scripts/check_build.py --root estuary/main.tex --pdf build/edited.pdf build/edited.zip
