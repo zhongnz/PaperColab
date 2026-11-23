@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>LaTeX export checker · PaperColab</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="mast"><div class="mast-inner">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>PaperColab</div>
+    <a class="repo" href="https://github.com/zhongnz/PaperColab" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+  </div></header>
+  <main>
+    <header class="intro">
+      <p class="overline">LaTeX migration</p>
+      <h1>Check your manuscript export<span class="dot">.</span></h1>
+      <p>Find missing sections, figures and references in a Prism or LaTeX project ZIP before you move your paper.</p>
+    </header>
+    <div id="start" class="start-grid">
+      <section id="drop" class="drop" aria-labelledby="input-heading">
+        <span class="file-icon" aria-hidden="true"><i></i></span>
+        <h2 id="input-heading">Drop your ZIP here</h2>
+        <p>Single-project and multi-project exports up to 64 MiB.</p>
+        <button type="button" class="primary" id="choose">Choose a ZIP <span aria-hidden="true">↑</span></button>
+        <small>Files are processed on this device.</small>
+      </section>
+      <aside class="example" aria-labelledby="example-heading">
+        <p class="overline">Example project</p>
+        <h2 id="example-heading">Estuary field notes</h2>
+        <ul class="tree" aria-label="Files in the example manuscript">
+          <li class="tree-root">main.tex</li><li>sections/methods.tex</li><li>references.bib</li>
+        </ul>
+        <button id="example" type="button" class="text-button">Inspect example <span aria-hidden="true">→</span></button>
+      </aside>
+    </div>
+    <input id="file" type="file" accept=".zip,application/zip,application/x-zip-compressed" hidden>
+    <p role="status" id="progress" hidden></p>
+    <div role="alert" id="error" hidden></div>
+    <section id="report" aria-labelledby="report-heading" hidden>
+      <div class="report-top">
+        <div><p class="overline">Archive report</p><h2 id="report-heading" tabindex="-1"></h2></div>
+        <div class="actions"><button id="again" class="secondary" type="button">Choose another ZIP</button>
+          <button id="download" class="primary" type="button">Save report <span aria-hidden="true">↓</span></button></div>
+      </div>
+      <div class="metrics" id="metrics"></div>
+      <div id="archive-notes"></div>
+      <div id="root-panel">
+        <label for="root">Manuscript root</label><select id="root"></select>
+        <h3 id="root-status"></h3>
+        <div id="root-notes"></div><div id="references"></div>
+      </div>
+      <details><summary>Archive metadata and files</summary><div id="metadata"></div></details>
+      <details id="build-panel"><summary>Verify a PDF build</summary><p>The browser checks file references. Run the separate TeX Live build check from a PaperColab checkout to produce a fresh PDF. Place the ZIP in that folder, then compare the PDF with your last known good copy.</p>
+        <pre><code id="build-command"></code></pre>
+        <button type="button" class="text-button" id="sample-download" hidden>Save the example ZIP ↓</button>
+      </details>
+    </section>
+    <section class="how" aria-labelledby="how-title">
+      <h2 id="how-title">What the checker looks for</h2>
+      <div class="checks">
+        <div><h3>Project structure</h3><p>Root manuscripts, included sections and files inside the archive.</p></div>
+        <div><h3>File references</h3><p>Local figures, bibliographies and paths that need a TeX build to resolve.</p></div>
+        <div><h3>Export records</h3><p>Recorded export errors, JSON metadata and archived conversation files.</p></div>
+      </div>
+    </section>
+    <noscript><p>Enable JavaScript to inspect a ZIP in your browser.</p></noscript>
+  </main>
+  <footer>PaperColab <span aria-hidden="true">/</span> Manuscript tools</footer>
+  <script src="vendor/zip-core.min.js"></script>
+  <script src="archive.js"></script>
+  <script src="inspect.js"></script>
+  <script src="example.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

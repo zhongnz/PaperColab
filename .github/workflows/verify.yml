@@ -1,0 +1,38 @@
+name: Verify export tools
+on: [pull_request, workflow_dispatch]
+permissions:
+  contents: read
+
+jobs:
+  archive-and-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: node --test tests/validator.test.cjs
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends latexmk texlive-latex-recommended
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - run: python -m pip install playwright==1.56.0
+      - run: python tests/browser_smoke.py
+
+  isolated-pdf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/package.py --zip sample.zip
+      - run: docker pull texlive/texlive:TL2025-historic
+      - run: python scripts/check_build.py --root estuary/main.tex --pdf checked.pdf sample.zip
