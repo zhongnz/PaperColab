@@ -1,5 +1,5 @@
 cohort,short_title,record_url,pinned_source_url,inspection_status
-arXiv,emcee: The MCMC Hammer,https://arxiv.org/abs/1202.3665,https://github.com/dfm/emcee/tree/3036b79448cc671d1a1a6c9104b6f0b7c4362850/document,static check recorded
+arXiv,emcee: The MCMC Hammer,https://arxiv.org/abs/1202.3665,https://github.com/dfm/emcee/tree/3036b79448cc671d1a1a6c9104b6f0b7c4362850/document,static check and PDF baseline passed
 arXiv,Proximal Policy Optimization Algorithms,https://arxiv.org/abs/1707.06347,https://arxiv.org/src/1707.06347v1,candidate
 arXiv,RoBERTa,https://arxiv.org/abs/1907.11692,https://arxiv.org/src/1907.11692v1,candidate
 NeurIPS,Attention Is All You Need,https://arxiv.org/abs/1706.03762,https://arxiv.org/src/1706.03762v1,candidate
