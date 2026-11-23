@@ -87,27 +87,30 @@
     const reader = new zip.ZipReader(new zip.BlobReader(blob), { useWebWorkers: false });
     const writer = new zip.ZipWriter(new zip.BlobWriter('application/zip'), { useWebWorkers: false });
     const written = new Set();
-    let total = 0;
+    let total = 0, retainedText = 0;
     try {
       for await (const entry of reader.getEntriesGenerator()) {
         const name = entry.filename.replace(/^(?:\.\/)+/, '');
         const options = { directory: entry.directory, comment: entry.comment, lastModDate: entry.lastModDate,
           externalFileAttributes: entry.externalFileAttributes, versionMadeBy: entry.versionMadeBy };
+        let size = entry.uncompressedSize;
         if (entry.directory) {
           await writer.add(entry.filename, undefined, options);
         } else if (changes.has(name)) {
           if (!/\.(?:tex|ltx)$/i.test(name)) throw new Error('Only LaTeX source files can be edited.');
           const bytes = new TextEncoder().encode(changes.get(name));
           if (bytes.length > limits.text) throw new Error('An edited source exceeds the 4 MiB text limit.');
-          total += bytes.length;
+          size = bytes.length;
           await writer.add(entry.filename, new zip.Uint8ArrayReader(bytes), options);
           written.add(name);
         } else {
-          total += entry.uncompressedSize;
           const compressed = await entry.getData(new zip.BlobWriter(), { passThrough: true });
           await writer.add(entry.filename, new zip.BlobReader(compressed), { ...options, passThrough: true,
             compressionMethod: entry.compressionMethod, uncompressedSize: entry.uncompressedSize, signature: entry.signature });
         }
+        total += size;
+        if (!entry.directory && isText(name) && size <= limits.text) retainedText += size;
+        if (retainedText > limits.allText) throw new Error('Edited project exceeds the 32 MiB source and metadata limit.');
         if (total > limits.expanded) throw new Error('Edited project exceeds the expanded archive limit.');
       }
       if (written.size !== changes.size) throw new Error('An edited source was not present in the original archive.');

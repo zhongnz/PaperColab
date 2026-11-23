@@ -49,6 +49,23 @@ def exercise(browser, uri, width, screenshots, output_zip):
     expect(visual).to_contain_text("Replicate samples.")
     expect(visual.locator(".tex-token")).to_have_text(r"\cite{fieldguide}")
 
+    visual.press("Control+Home")
+    for _ in "Replicate":
+        visual.press("Shift+ArrowRight")
+    bold = page.get_by_role("button", name="Bold", exact=True)
+    italic = page.get_by_role("button", name="Italic", exact=True)
+    bold.click()
+    italic.click()
+    expect(code).to_contain_text(r"\textbf{\emph{Replicate}}")
+    italic.click()
+    bold.click()
+    expect(code).not_to_contain_text(r"\textbf")
+    visual.press("Control+a")
+    visual.press("Backspace")
+    expect(visual.locator(".tex-token")).to_have_text(r"\cite{fieldguide}")
+    expect(page.locator("#edit-message")).to_contain_text("LaTeX pane")
+    visual.press("Home")
+
     if screenshots:
         page.screenshot(path=screenshots / f"editor-{width}.png", full_page=True)
     for selector in ["main", ".outline", ".sheet", "#visual-surface", "#source-surface"]:

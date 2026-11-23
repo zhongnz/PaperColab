@@ -58,6 +58,7 @@ jobs:
         with:
           name: browser-edited-project
           path: build
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils
       - name: Compile the browser export and check its edited text
         run: |
           python scripts/check_build.py --root estuary/main.tex --pdf build/editor-edited.pdf build/editor-edited.zip
@@ -85,4 +86,8 @@ jobs:
           node corpus/roundtrip.cjs build/emcee.zip document/ms.tex build/emcee-edited.zip
           python scripts/check_build.py --root document/ms.tex --pdf build/emcee-edited.pdf build/emcee-edited.zip
           pdftotext build/emcee-edited.pdf build/emcee-edited.txt
-          grep -F 'PaperColab round-trip check.' build/emcee-edited.txt
+          python - <<'PY'
+          from pathlib import Path
+          text = ' '.join(Path('build/emcee-edited.txt').read_text().split()).replace('round- trip', 'round-trip')
+          assert 'PaperColab round-trip check.' in text
+          PY

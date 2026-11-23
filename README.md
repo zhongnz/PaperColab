@@ -1,6 +1,17 @@
 # PaperColab
 
-PaperColab is an open-source project for writing and reviewing scientific manuscripts together. Its first tool checks a Prism or ordinary LaTeX export before a research group moves its paper.
+PaperColab is an open-source project for writing and reviewing scientific manuscripts together. The offline editor opens an existing LaTeX project, lets an author edit a supported block visually or in source, and exports a project ZIP ready for its usual TeX build.
+
+## Edit a manuscript
+
+Open **web/index.html** and select **Open example editor**. For your own paper, choose a project ZIP, select a manuscript root and click **Edit manuscript**. The outline lists the files and blocks. Choose a paragraph or section heading to edit.
+
+- Type in the visual pane or use bold and italic. The LaTeX pane follows each visual change. Citations, references and inline maths appear as protected tokens.
+- To change a token or fine-tune source, edit the LaTeX pane and click **Apply source**. Invalid or multi-block source stays in the draft until corrected or discarded.
+- Tables, display equations, custom macros, preambles and complex blocks appear as read-only LaTeX. **Revert block** restores its exact input. Visual undo and redo operate within the current block.
+- **Export project ZIP** saves the project. Edits are held in this tab’s memory. Export before closing the tab or handing the paper to a co-author.
+
+An untouched project exports as the original ZIP bytes. After an edit, PaperColab rewrites only the chosen source spans. It may reflow whitespace inside a visually edited paragraph. Original line endings, comments and bytes outside the edited spans are preserved, including the content of every other file. Edited ZIP containers may have different ZIP metadata. Visual editing covers UTF-8 source files up to 512 KiB. The current workspace is single-author.
 
 ## Check an export
 
@@ -45,11 +56,23 @@ Keep the original ZIP and a reference PDF. Project history, permissions and live
 Run the archive and build tests with Node 22+ and Python 3.11+. The two trusted example build tests also need latexmk, pdfLaTeX, BibTeX and booktabs. The browser integration check uses Playwright for Python and Chrome or Chromium.
 
 ~~~sh
-node --test tests/validator.test.cjs
+node --test tests/*.test.cjs
 python3 -m unittest discover -s tests -p 'test_*.py'
 python3 tests/browser_smoke.py
+python3 tests/editor_browser.py --output-zip build/editor-edited.zip
 ~~~
 
 The [pilot plan](docs/pilot.md) contains the interview guide, the two-minute friction log and the criteria for building the collaborative editor. The [manuscript corpus](corpus/README.md) records versioned source candidates and the first published-source inspection.
 
-PaperColab code and its fictional example use the [Apache License 2.0](LICENSE). The offline bundle includes [zip.js 2.25.0](https://github.com/gildas-lormeau/zip.js/tree/9f42e4694a3f72dbdfe8186a2ff3e0f9a226014a) under its [BSD licence](web/vendor/zip-LICENSE.txt). Its vendored zip-core.min.js has SHA-256 e9ac7bba4f42253414278cd1d85ff0fd3b2dc80e06de021c57d9c4173d4b9d9e.
+### Open-source components
+
+| Component | Role in PaperColab |
+| --- | --- |
+| [Tiptap 3 and ProseMirror](https://github.com/ueberdosis/tiptap) | Visual block editing, selection, formatting and undo |
+| [CodeMirror 6](https://github.com/codemirror/dev) | Editable LaTeX source with syntax highlighting and line numbers |
+| [unified-latex](https://github.com/siefkenj/unified-latex) | Parse LaTeX and locate source spans |
+| [zip.js](https://github.com/gildas-lormeau/zip.js) | Verify archives and preserve compressed data for untouched files |
+
+PaperColab owns the mapping between manuscript blocks and original source ranges. To rebuild the editor libraries, use Node 24 and run `npm ci --ignore-scripts` followed by `npm run build:vendor`. CI checks that the resulting bundles and notices match the checked-in copies. Opening the app requires no npm install or remote services.
+
+PaperColab code and its fictional example use the [Apache License 2.0](LICENSE). The bundled editors and parser ship with [per-package third-party notices](web/vendor/editor-NOTICES.txt). The bundled zip.js 2.25.0 has its own [BSD licence](web/vendor/zip-LICENSE.txt). The single-file distribution includes the same notices.

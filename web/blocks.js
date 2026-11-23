@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const headingNames = new Set(['section', 'subsection', 'subsubsection']);
+  const standalone = new Set(['maketitle', 'tableofcontents', 'appendix', 'clearpage', 'newpage', 'frontmatter', 'mainmatter', 'backmatter']);
   const inlineRefs = new Set(['cite', 'citep', 'citet', 'ref', 'eqref', 'pageref']);
   const marks = { textbf: 'bold', emph: 'italic', textit: 'italic' };
   const escaped = { '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}', '\u00a0': '~' };
@@ -33,7 +34,7 @@
     } };
   }
 
-  function asRich(nodes, source, depth = 0) {
+  function asRich(nodes, slice, depth = 0) {
     if (depth > 12) return null;
     const result = [];
     function append(item) {
@@ -41,7 +42,7 @@
       if (item.type === 'text' && previous?.type === 'text' && same(item.marks, previous.marks)) previous.text += item.text;
       else result.push(item);
     }
-    const raw = n => source.slice(n.position.start.offset, n.position.end.offset);
+    const raw = n => slice(n.position.start.offset, n.position.end.offset);
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i], next = nodes[i + 1];
       if (node.type === 'whitespace') { append({ type: 'text', text: ' ' }); continue; }
@@ -64,16 +65,17 @@
       if (Object.hasOwn(namedEscapes, name) && !next.content.length) {
         append({ type: 'text', text: namedEscapes[name] });
       } else if (Object.hasOwn(marks, name)) {
-        const children = asRich(next.content, source, depth + 1);
+        const children = asRich(next.content, slice, depth + 1);
         if (!children?.length) return null;
         for (const child of children) {
-          const types = new Set((child.marks ?? []).map(m => m.type));
-          types.add(marks[name]);
-          child.marks = [...types].sort().map(type => ({ type }));
+          const existing = child.marks ?? [];
+          if (existing.some(mark => mark.type === marks[name])) return null;
+          const mark = name === 'textit' ? { type: 'italic', attrs: { command: 'textit' } } : { type: marks[name] };
+          child.marks = [...existing, mark].sort((a, b) => a.type.localeCompare(b.type));
           append(child);
         }
       } else if (inlineRefs.has(name) && /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(raw(next))) {
-        append({ type: 'texToken', attrs: { latex: source.slice(node.position.start.offset, next.position.end.offset) } });
+        append({ type: 'texToken', attrs: { latex: slice(node.position.start.offset, next.position.end.offset) } });
       } else return null;
       i++;
     }
@@ -84,12 +86,14 @@
     const children = rich?.content?.[0]?.content ?? [];
     let text = '', open = [];
     for (const child of children) {
-      const next = (child.marks ?? []).map(mark => mark.type).sort();
-      if (next.some(type => !Object.hasOwn(markup, type))) throw new Error('Unsupported formatting.');
+      const next = [...(child.marks ?? [])].sort((a, b) => a.type.localeCompare(b.type)).map(mark => {
+        if (!Object.hasOwn(markup, mark.type)) throw new Error('Unsupported formatting.');
+        return mark.type === 'italic' && mark.attrs?.command === 'textit' ? 'textit' : markup[mark.type];
+      });
       let shared = 0;
       while (shared < open.length && shared < next.length && open[shared] === next[shared]) shared++;
       text += '}'.repeat(open.length - shared);
-      for (const m of next.slice(shared)) text += '\\' + markup[m] + '{';
+      for (const m of next.slice(shared)) text += '\\' + m + '{';
       open = next;
       if (child.type === 'text') text += encode(child.text);
       else if (child.type === 'texToken') text += child.attrs.latex;
@@ -106,7 +110,6 @@
 
   function parseFile(original, { root = false } = {}) {
     const blocks = [];
-    const { text, at } = coordinates(original);
     function add(kind, from, to, info = {}) {
       if (from >= to || !original.slice(from, to).trim()) return;
       blocks.push({ id: blocks.length + 1, kind, from, to, ...info });
@@ -117,6 +120,8 @@
       return { original, blocks, edits: new Map() };
     };
     if (new TextEncoder().encode(original).length > 512 * 1024) return rawFile('This file exceeds the visual editor’s 512 KiB text limit.');
+    const { text, at } = coordinates(original);
+    const slice = (from, to) => original.slice(at(from), at(to));
     if (/\\(?:catcode|obeylines|obeyspaces|ExplSyntaxOn)\b/.test(text)) return rawFile('This file changes how TeX reads source characters.');
     let ast;
     try { ast = PaperColabLatex.LatexPegParser.parse(text); }
@@ -137,7 +142,7 @@
       run = [];
       if (!group.length) return;
       const from = start(group[0]), to = end(group.at(-1));
-      const rich = asRich(group, text);
+      const rich = asRich(group, slice);
       if (rich?.length) add('paragraph', from, to, { rich: doc(rich), prefix: '', suffix: '' });
       else add('raw', from, to, { label: 'LaTeX source' });
     }
@@ -150,14 +155,23 @@
         continue;
       }
       if (n.type === 'macro' && headingNames.has(n.content)) {
+        // TeX also permits a control sequence to be an unbraced argument, e.g. in a definition.
+        const previous = run.findLast(item => !isSpace(item) && item.type !== 'comment');
+        const offset = n.position.start.offset;
+        const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+        if ((previous && !/^[ \t]*$/.test(text.slice(lineStart, offset))) ||
+            (previous?.type === 'macro' && !standalone.has(previous.content))) {
+          run.push(n);
+          continue;
+        }
         let j = i + 1;
         if (nodes[j]?.type === 'string' && nodes[j].content === '*') j++;
         if (nodes[j]?.type === 'whitespace') j++;
         const title = nodes[j];
         if (title?.type === 'group') {
           flush();
-          const rich = asRich(title.content, text);
-          if (rich?.length) add('heading', start(n), end(title), { rich: doc(rich),
+          const rich = asRich(title.content, slice);
+          if (rich) add('heading', start(n), end(title), { rich: doc(rich),
             prefix: original.slice(start(n), start(title) + 1), suffix: '}', label: n.content });
           else add('raw', start(n), end(title), { label: 'LaTeX heading' });
           i = j;

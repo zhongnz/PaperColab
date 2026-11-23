@@ -126,3 +126,15 @@ test('an untouched ZIP is byte-identical and a changed ZIP preserves paths, sibl
     else assert.deepEqual(b.value[i],a.value[i]);
   }
 });
+
+test('editing prose preserves multiline math tokens, textit semantics and raw macro definitions', () => {
+  const s = tex`\newcommand\section{word}` + '\r\n\r\n' + tex`A \textit{word} with $a` + '\r\n' + tex`+ b$.`;
+  const f = B.parseFile(s);
+  assert.deepEqual(f.blocks.map(b=>b.kind), ['raw','paragraph']);
+  const p = f.blocks[1];
+  B.editVisual(f, p, append(p.rich, ' Done.'));
+  assert.equal(B.exportText(f), s + ' Done.');
+  for (const contents of [tex`\emph{one \emph{two}}`,tex`A \verb|\section{literal}| here.`]) {
+    assert.deepEqual(B.parseFile(contents).blocks.map(b=>b.kind), ['raw']);
+  }
+});

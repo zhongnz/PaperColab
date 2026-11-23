@@ -81,7 +81,7 @@ details>p,details>ul,details>pre{margin:10px 0 0}
 .example-actions,.export-actions,.source-actions,.formatting{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
 #open-editor{margin:4px 0 4px 5px}
 body.editing .intro,body.editing #report,body.editing #start,body.editing .how{display:none}
-body.editing main{width:min(1240px,calc(100% - 72px))}
+body.editing main,body.editing .mast-inner,body.editing footer{width:min(1240px,calc(100% - 72px))}
 #workspace{margin:26px 0 46px}
 #back-report span{margin:0 3px 0 0}
 .edit-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:14px 0 22px}
@@ -120,9 +120,9 @@ button:disabled{cursor:default;opacity:.46}
 #raw-explanation,#block-empty,#edit-message{color:var(--muted);font-size:.85rem}
 #edit-message{margin:12px 0 0}#edit-message:empty{margin:0}
 @media(max-width:760px){
- body.editing main{width:calc(100% - 28px)}#workspace{margin-top:16px}.edit-layout{grid-template-columns:1fr}
+ body.editing main,body.editing .mast-inner,body.editing footer{width:calc(100% - 28px)}#workspace{margin-top:16px}.edit-layout{grid-template-columns:1fr}
  .outline{border-right:0;border-bottom:1px solid var(--line);padding:12px 15px}
- .outline .overline{margin-bottom:6px}#block-list{max-height:126px;margin-top:8px}
+ .outline .overline{margin-bottom:6px}#block-list{max-height:145px;margin-top:8px}
  #block-list button{padding:4px 8px}.block-excerpt{-webkit-line-clamp:1}
  .edit-header{margin:9px 0 15px}.visual-prose{min-height:110px;padding:14px}
  #open-editor{margin:8px 0}

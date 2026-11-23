@@ -13,7 +13,8 @@
       return ['span', { class: 'tex-token', contenteditable: 'false', title: latex, 'aria-label': latex }, latex];
     } });
   const bold = E.TiptapMark.create({ name: 'bold', parseHTML: () => [{ tag: 'strong' }, { tag: 'b' }], renderHTML: () => ['strong', 0] });
-  const italic = E.TiptapMark.create({ name: 'italic', parseHTML: () => [{ tag: 'em' }, { tag: 'i' }], renderHTML: () => ['em', 0] });
+  const italic = E.TiptapMark.create({ name: 'italic',
+    addAttributes: () => ({ command: { default: null, rendered: false } }), parseHTML: () => [{ tag: 'em' }, { tag: 'i' }], renderHTML: () => ['em', 0] });
   const runHistory = (editor, command) => command(editor.state, editor.view.dispatch);
 
   function visual(host, content, { onChange, onState, onProtected }) {
