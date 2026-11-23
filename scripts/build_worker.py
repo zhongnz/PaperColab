@@ -27,7 +27,11 @@ def unpack(data, directory):
         if len(entries) > 4000:
             raise ValueError("Archive exceeds 4,000 entries.")
         for entry in entries:
-            name = entry.orig_filename.removesuffix("/") if entry.is_dir() else entry.orig_filename
+            name = re.sub(r"^(?:\./)+", "", entry.orig_filename)
+            if not name and entry.is_dir() and entry.orig_filename.startswith("./"):
+                continue
+            if entry.is_dir():
+                name = name.removesuffix("/")
             mode = stat.S_IFMT(entry.external_attr >> 16)
             if not valid_path(name) or name in used:
                 raise ValueError("Unsafe or conflicting archive path.")
@@ -49,6 +53,7 @@ def unpack(data, directory):
 
 
 def build(data, root, engine, work):
+    root = re.sub(r"^(?:\./)+", "", root)
     if len(data) > 64 * MIB or engine not in ENGINES or not valid_path(root):
         raise ValueError("Unsupported archive, manuscript path or engine.")
     # latexmk constructs engine command lines internally. Limit the basename it receives.

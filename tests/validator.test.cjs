@@ -116,3 +116,10 @@ test('rejects ambiguous and unsafe entry names before accepting the archive', as
   await assert.rejects(readArchive(new Blob([])), /empty/);
   await assert.rejects(readArchive({ size: 65 * 1024 * 1024 }), /64 MiB/);
 });
+
+test('accepts leading current-directory components and rejects aliases of the same file', async () => {
+  const dotted = await makeZip([['./main.tex', root('ok')]]);
+  assert.deepEqual(inventory(await readArchive(dotted)).roots, ['main.tex']);
+  const alias = await makeZip([['./main.tex', root('one')], ['main.tex', root('two')]]);
+  await assert.rejects(readArchive(alias), /Conflicting/);
+});

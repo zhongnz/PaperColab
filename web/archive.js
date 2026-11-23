@@ -20,7 +20,9 @@
       for await (const entry of reader.getEntriesGenerator()) {
         signal?.throwIfAborted();
         if (++count > limits.entries) throw new Error('This ZIP contains more than 4,000 entries. Check one project at a time.');
-        const path = entry.directory ? entry.filename.replace(/\/$/, '') : entry.filename;
+        const name = entry.filename.replace(/^(?:\.\/)+/, '');
+        if (!name && entry.directory && entry.filename.startsWith('./')) continue;
+        const path = entry.directory ? name.replace(/\/$/, '') : name;
         if (!validPath(path)) throw new Error('This ZIP contains an unsafe or unsupported file path.');
         const unixType = (entry.externalFileAttributes >>> 28) & 15;
         if (entry.encrypted || (unixType && unixType !== 8 && unixType !== 4)) {
