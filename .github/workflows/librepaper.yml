@@ -24,5 +24,13 @@ jobs:
       - run: echo "export {LoroDoc, LoroText} from 'loro-crdt'" > build/upstream/web/papercolab-loro.mjs
       - run: python3 scripts/package.py --zip build/input.zip
       - run: node experiments/librepaper/trial.mjs build/upstream build/input.zip build/edited.zip
+      - run: npm ci --ignore-scripts
+      - run: node_modules/.bin/esbuild experiments/librepaper/demo.mjs --bundle --format=esm --target=es2022 --outfile=build/cell-demo/app.js
+      - run: cp build/deps/node_modules/loro-crdt/web/*.wasm build/cell-demo/
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install playwright==1.56.0
+      - run: python experiments/librepaper/browser.py
       - run: docker pull texlive/texlive:TL2025-historic
       - run: python3 scripts/check_build.py --root estuary/main.tex --pdf build/edited.pdf build/edited.zip

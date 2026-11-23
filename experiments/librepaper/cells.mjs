@@ -38,10 +38,10 @@ export function cellSession({ doc, fileId, root = false, model, anchors, trackin
     return ids;
   }
 
-  function visual(snapshot, rich) {
+  function update(snapshot, apply, tracked) {
     const live = read(snapshot.id);
     if (!live || live.source !== snapshot.source) throw Error('Cell changed. Refresh before applying this draft.');
-    model.editVisual(live.file, live.block, rich);
+    apply(live);
     const next = model.current(live.file, live.block);
     // Compare code points so an edit can never split a UTF-16 surrogate pair.
     const a = Array.from(live.source), b = Array.from(next);
@@ -51,7 +51,9 @@ export function cellSession({ doc, fileId, root = false, model, anchors, trackin
     while (right < a.length-left && right < b.length-left && a[a.length-1-right] === b[b.length-1-right]) right++;
     const from = live.block.from + a.slice(0,left).join('').length;
     const to = live.block.to - a.slice(a.length-right).join('').length;
-    return write([{from, to, insert:b.slice(left,b.length-right).join('')}], true);
+    return write([{from, to, insert:b.slice(left,b.length-right).join('')}], tracked);
   }
-  return { attach, read, visual, source: edits => write(edits, false), parse, body };
+  const visual = (snapshot, rich) => update(snapshot, live => model.editVisual(live.file, live.block, rich), true);
+  const markup = (snapshot, source) => update(snapshot, live => model.editSource(live.file, live.block, source), false);
+  return { attach, read, visual, markup, source: edits => write(edits, false), parse, body };
 }
