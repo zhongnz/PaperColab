@@ -1,0 +1,61 @@
+name: Verify export tools
+on: [pull_request, workflow_dispatch]
+permissions:
+  contents: read
+
+jobs:
+  archive-and-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: node --test tests/validator.test.cjs
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends latexmk texlive-latex-recommended
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - run: python -m pip install playwright==1.56.0
+      - run: python tests/browser_smoke.py --screenshots build/browser
+      - run: python scripts/package.py --html build/PaperColab-Export-Checker.html
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: papercolab-offline
+          path: build/PaperColab-Export-Checker.html
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-layout
+          path: build/browser/
+          retention-days: 1
+
+  isolated-pdf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python scripts/package.py --zip sample.zip
+      - run: docker pull texlive/texlive:TL2025-historic
+      - run: python scripts/check_build.py --root estuary/main.tex --pdf checked.pdf sample.zip
+
+      - name: Fetch the pinned published manuscript
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dfm/emcee
+          ref: 3036b79448cc671d1a1a6c9104b6f0b7c4362850
+          path: build/emcee-source
+          persist-credentials: false
+          sparse-checkout: document
+      - name: Build the published manuscript in isolation
+        run: |
+          git -C build/emcee-source archive --format=zip HEAD document/ms.tex document/aastex.cls > build/emcee.zip
+          python scripts/check_build.py --root document/ms.tex --pdf build/emcee.pdf build/emcee.zip

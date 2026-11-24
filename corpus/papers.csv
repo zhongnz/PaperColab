@@ -1,0 +1,21 @@
+cohort,short_title,record_url,pinned_source_url,inspection_status
+arXiv,emcee: The MCMC Hammer,https://arxiv.org/abs/1202.3665,https://github.com/dfm/emcee/tree/3036b79448cc671d1a1a6c9104b6f0b7c4362850/document,static check and PDF baseline passed
+arXiv,Proximal Policy Optimization Algorithms,https://arxiv.org/abs/1707.06347,https://arxiv.org/src/1707.06347v1,candidate
+arXiv,RoBERTa,https://arxiv.org/abs/1907.11692,https://arxiv.org/src/1907.11692v1,candidate
+NeurIPS,Attention Is All You Need,https://arxiv.org/abs/1706.03762,https://arxiv.org/src/1706.03762v1,candidate
+NeurIPS,Denoising Diffusion Probabilistic Models,https://arxiv.org/abs/2006.11239,https://arxiv.org/src/2006.11239v1,candidate
+NeurIPS,Language Models are Few-Shot Learners,https://arxiv.org/abs/2005.14165,https://arxiv.org/src/2005.14165v1,candidate
+NeurIPS,Generative Adversarial Networks,https://arxiv.org/abs/1406.2661,https://arxiv.org/src/1406.2661v1,candidate
+ICML,Batch Normalization,https://arxiv.org/abs/1502.03167,https://arxiv.org/src/1502.03167v1,candidate
+ICML,EfficientNet,https://arxiv.org/abs/1905.11946,https://arxiv.org/src/1905.11946v1,candidate
+ICML,Model-Agnostic Meta-Learning,https://arxiv.org/abs/1703.03400,https://arxiv.org/src/1703.03400v1,candidate
+ACL,BART,https://arxiv.org/abs/1910.13461,https://arxiv.org/src/1910.13461v1,candidate
+ACL,Asking and Answering Questions to Evaluate the Factual Consistency of Summaries,https://arxiv.org/abs/2004.04228,https://arxiv.org/src/2004.04228v1,candidate
+ACL,Beyond Accuracy: Behavioral Testing of NLP Models with CheckList,https://arxiv.org/abs/2005.04118,https://arxiv.org/src/2005.04118v1,candidate
+ACM CHI,CoAuthor,https://arxiv.org/abs/2201.06796,https://arxiv.org/src/2201.06796v1,candidate
+ACM CHI,AI Chains,https://arxiv.org/abs/2110.01691,https://arxiv.org/src/2110.01691v1,candidate
+ACM CHI,ChainForge,https://arxiv.org/abs/2309.09128,https://arxiv.org/src/2309.09128v1,candidate
+IEEE/CVF,Deep Residual Learning for Image Recognition,https://arxiv.org/abs/1512.03385,https://arxiv.org/src/1512.03385v1,candidate
+IEEE/CVF,You Only Look Once,https://arxiv.org/abs/1506.02640,https://arxiv.org/src/1506.02640v1,candidate
+IEEE/CVF,Feature Pyramid Networks for Object Detection,https://arxiv.org/abs/1612.03144,https://arxiv.org/src/1612.03144v1,candidate
+IEEE/CVF,Mask R-CNN,https://arxiv.org/abs/1703.06870,https://arxiv.org/src/1703.06870v1,candidate
