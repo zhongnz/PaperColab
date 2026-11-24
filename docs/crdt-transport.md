@@ -93,7 +93,8 @@ scripts and people using the same browser profile. Disable on shared devices.
 No automatic restore or upload. Stored drafts can be listed, downloaded,
 removed or compared against fresh server state. Reconciliation uses explicit
 LaTeX input, normal server validation and current cell version checks, not an
-automatic merge. Missing cells are downloadable only. A successful save or
+automatic merge. While a comparison is open, background refresh pauses and
+the user can refresh the server comparison without losing the candidate text. Missing cells are downloadable only. A successful save or
 proposal removes its record; cleanup failures are reported. Navigation can leave
 records for later recovery. This is draft persistence, not durable CRDT replicas,
 full offline editing or server-side encrypted storage. The initial implementation

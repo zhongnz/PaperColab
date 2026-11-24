@@ -46,12 +46,13 @@ def run(browser,url):
     # A second remote edit makes the comparison stale; it cannot overwrite.
     q.click();q.press("Control+Home");b.keyboard.insert_text("Second ")
     b.get_by_role("button",name="Save cell directly").click()
-    expect(q).to_contain_text("Second")
-    expect(p).to_contain_text("Second",timeout=12000)
-    # The view refresh may close comparison; reopen if so, then test manual resolution.
-    a.get_by_role("button",name="Show stored drafts").click()
-    expect(saved).to_have_count(1)
-    saved.click()
+    expect(b.locator("#status")).to_contain_text("saved via direct")
+    expect(a.locator("#sync-state")).to_contain_text("Refresh the server comparison",timeout=12000)
+    expect(a.locator("#recovery-local")).to_contain_text("Recovered local")
+    a.get_by_role("button",name="Save reconciled cell").click()
+    expect(a.locator("#error")).to_contain_text("This cell changed remotely")
+    assert "Recovered local" in a.locator("#recovery-result").input_value()
+    a.get_by_role("button",name="Refresh server comparison").click()
     expect(a.locator("#recovery-remote")).to_contain_text("Second")
     area=a.locator("#recovery-result")
     area.fill(a.locator("#recovery-remote").inner_text().replace("Second ","Reconciled "))
@@ -60,7 +61,7 @@ def run(browser,url):
     expect(q).to_contain_text("Reconciled",timeout=12000)
     expect(a.locator("#recovery-list")).to_contain_text("No stored drafts")
     assert not errors,errors
-    context.close();b.close()
+    context.close()
 
 if __name__=="__main__":
     with tempfile.TemporaryDirectory() as tmp:

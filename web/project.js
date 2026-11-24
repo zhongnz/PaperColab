@@ -27,7 +27,7 @@
     if(!$('durable-drafts').checked||!me||!detail||!base)return;
     const id=[me.id,detail.id,draftSession,base.stableId].join(':');
     if(after===base.quote&&valid&&!extra){forget(base);return;}
-    const row={id,actor:me.id,project:detail.id,cell:base.stableId,path:base.path,
+    const row={id:localRecords.get(id)?.id??crypto.randomUUID(),actor:me.id,project:detail.id,cell:base.stableId,path:base.path,
       version:base.version,before:base.quote,after,mode,valid,extra,
       updated:Date.now(),stamp:crypto.randomUUID()};
     localRecords.set(id,row);
@@ -40,7 +40,7 @@
     const row=localRecords.get(id);
     if(!row)return Promise.resolve();
     localRecords.delete(id);
-    return enqueue(async()=>{if(!await store.remove(id,row.stamp))throw Error('Draft record changed in another session.');});
+    return enqueue(async()=>{if(!await store.remove(row.id,row.stamp))throw Error('Draft record changed in another session.');});
   }
   async function discardCurrent(){
     const bases=isMulti()?[...multiDrafts.values()].map(x=>x.base):[selected];
@@ -51,11 +51,16 @@
     $('recovery-detail').hidden=true;$('recovery-list').replaceChildren();
     $('recovery-base').textContent=$('recovery-local').textContent=$('recovery-remote').textContent='';
     $('recovery-result').value='';
+    if(!busy)$('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=false;
+  }
+  function mayCloseRecovery(){
+    return !recovery||$('recovery-result').value===normalise(recovery.row.after)||
+      window.confirm('Close this comparison and discard the reconciliation text? The original stored draft remains.');
   }
   async function listRecovery(){
-    if(!me||!detail)return;
+    if(!me||!detail||!mayCloseRecovery())return;
+    closeRecovery();
     const actor=me.id,project=detail.id,generation=++recoveryGeneration;
-    recovery=null;$('recovery-detail').hidden=true;
     await writes;
     const rows=await store.list(actor,project);
     if(generation!==recoveryGeneration||me?.id!==actor||detail?.id!==project)return;
@@ -63,11 +68,13 @@
     for(const row of rows){
       const button=document.createElement('button');button.type='button';button.className='secondary';
       button.textContent=row.path+' · cell '+row.cell.slice(0,8)+' · v'+row.version+' · '+new Date(row.updated).toLocaleString();
-      button.onclick=()=>act(()=>compareRecovery(row),true);host.append(button);
+      button.onclick=()=>act(()=>compareRecovery(row),true,true);host.append(button);
     }
     if(!rows.length)host.textContent='No stored drafts for this project and signed-in account.';
   }
-  async function compareRecovery(row){
+  async function compareRecovery(row,keepResult=false){
+    if(!keepResult&&!mayCloseRecovery())return;
+    const previous=keepResult?$('recovery-result').value:null;
     if(dirty)throw Error('Keep and close your active drafts, or save them, before reconciling a stored draft.');
     if(row.actor!==me.id||row.project!==detail.id)throw Error('Draft scope changed.');
     const latest=await api('GET','/api/projects/'+detail.id);
@@ -80,7 +87,7 @@
     $('recovery-note').textContent=!current?'Cell missing. Copy the draft or download it; it cannot be saved here.':
       matches?'Original version still matches. Review your local draft.':
       'Conflict: current version '+current.version+' differs from original version '+row.version+'. Reconcile explicitly; no automatic merge.';
-    $('recovery-result').value=normalise(row.after);
+    $('recovery-result').value=previous??normalise(row.after);
     const member=latest.members.find(m=>m.id===me.id);
     const allowed=Boolean(current&&['author','lead'].includes(member?.role));
     $('recovery-save').hidden=!allowed||me.kind!=='human'||(!current.rich&&!B.scientific(current.quote));
@@ -209,6 +216,7 @@
     if(!current?.connected||!current.latest||busy||polling||detail?.id!==current.project||token!==current.token)return;
     const revision=current.latest.revision;
     if(revision===detail.revision)return;
+    if(recovery){$('sync-state').textContent='Remote revision '+revision+' available. Refresh the server comparison before reconciling.';return;}
     if(dirty){$('sync-state').textContent='Remote revision '+revision+' available. Your local draft is retained; save checks its cell version.';return;}
     busy=true;freeze(true);
     try{await openProject(current.project);}
@@ -222,10 +230,11 @@
     if(!supported)$('crdt-enabled').checked=false;
   }
   function freeze(value) {
-    $('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=value;
+    $('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=value||Boolean(recovery);
     for(const button of $('hosted-views').querySelectorAll('[data-view]'))button.disabled=value;
     $('file').disabled=value;
     $('durable-drafts').disabled=value||dirty;
+    $('local-recovery').inert=value;
     updateTransportControl();
   }
   const normalise = value => value.replace(/\r\n?/g,'\n');
@@ -270,7 +279,7 @@
   function destroyEditors() {
     visual?.destroy(); source?.destroy(); visual = source = null; draft = null; sourceDraft = '';
     for(const entry of cellViews.values()) entry.destroy();
-    cellViews.clear();multiDrafts.clear();$('hosted-cells').replaceChildren();
+    cellViews.clear();multiDrafts.clear();localRecords.clear();$('hosted-cells').replaceChildren();
     $('visual-host').replaceChildren(); $('source-host').replaceChildren();
     sourceDirty=false; draftState(false);
   }
@@ -421,7 +430,7 @@
       button.dataset.kind=block.kind;
       button.textContent = (block.kind === 'heading' ? 'Heading' : block.rich ? 'Paragraph' : 'Preserved') + ' · ' + block.quote.replace(/\s+/g, ' ').slice(0, 80);
       button.onclick = () => {
-        if(busy) return;
+        if(busy||recovery) return;
         if(isMulti()) {selected=block;presenceChanged();cellViews.get(block.stableId)?.element.scrollIntoView({block:'nearest'});}
         else if(!dirty || window.confirm($('durable-drafts').checked?'Leave active draft in local recovery and switch cell?':'Discard your local cell draft?')) selectBlock(block);
       };
@@ -585,7 +594,7 @@
     say(action==='direct'?'Cell saved via '+transport+'; other local drafts retained.':'Cell proposal recorded; other local drafts retained.');
   }
   for(const button of $('hosted-views').querySelectorAll('[data-view]')) button.onclick=()=>{
-    if(busy||button.dataset.view===viewMode) return;
+    if(busy||recovery||button.dataset.view===viewMode) return;
     if(dirty&&!window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch view?':'Discard all local cell drafts and switch view?')) return;
     act(async()=>{viewMode=button.dataset.view;updateView();await showFile($('file').value);},true);
   };
@@ -654,7 +663,8 @@
       const state=await api('GET','/api/projects/'+id+'/revision');
       if(busy || detail?.id!==id || token!==credential || detail.revision!==revision) return;
       if(state.revision!==revision) {
-        if(dirty) $('sync-state').textContent='Remote revision '+state.revision+' available. Your local draft is retained; save checks its cell version.';
+        if(recovery)$('sync-state').textContent='Remote revision '+state.revision+' available. Refresh the server comparison before reconciling.';
+        else if(dirty) $('sync-state').textContent='Remote revision '+state.revision+' available. Your local draft is retained; save checks its cell version.';
         else {
           // Lock editing during the refresh, after checking for any draft
           // created while the revision request was in flight.
@@ -694,9 +704,10 @@
     await openProject(detail.id);
   }
 
-  function act(work, allowDraft=false) {
+  function act(work, allowDraft=false, allowRecovery=false) {
     clear();
     if(busy) {say('Synchronisation in progress; try again.'); return;}
+    if(recovery&&!allowRecovery){say('Close the local draft comparison before another workspace action.');return;}
     if(dirty && !allowDraft) {say('Save, propose or discard the local cell draft before this action.');return;}
     busy=true;
     freeze(true);
@@ -709,7 +720,7 @@
   $('actor').value = token;
   $('token').value = token;
   function changeToken(next) {
-    if(busy || (dirty && !window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch account?':'Discard your local cell draft?'))) {$('actor').value=token;return;}
+    if(busy || recovery || (dirty && !window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch account?':'Discard your local cell draft?'))) {$('actor').value=token;return;}
     act(async()=>{
       const previous=detail?.id;
       stopLive();$('live-enabled').checked=false;
@@ -737,7 +748,7 @@
     });
   };
   $('file').onchange = () => {
-    if(busy || (dirty && !window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch file?':'Discard your local cell drafts?'))) {$('file').value=selected?.path??'';return;}
+    if(busy || recovery || (dirty && !window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch file?':'Discard your local cell drafts?'))) {$('file').value=selected?.path??'';return;}
     act(()=>showFile($('file').value),true);
   };
   $('save-direct').onclick=()=>act(saveDirect,true);
@@ -756,9 +767,11 @@
       throw Error('Not all active drafts have a local recovery record.');
     await openProject(detail.id);await listRecovery();say('Drafts kept locally. Select a stored draft to reconcile.');
   },true);
-  $('list-recovery').onclick=()=>act(listRecovery,true);
-  $('recovery-save').onclick=()=>act(()=>resolveRecovery('direct'));
-  $('recovery-propose').onclick=()=>act(()=>resolveRecovery('proposal'));
+  $('list-recovery').onclick=()=>act(listRecovery,true,true);
+  $('recovery-save').onclick=()=>act(()=>resolveRecovery('direct'),false,true);
+  $('recovery-propose').onclick=()=>act(()=>resolveRecovery('proposal'),false,true);
+  $('recovery-refresh').onclick=()=>act(()=>compareRecovery(recovery.row,true),false,true);
+  $('recovery-close').onclick=()=>{if(mayCloseRecovery())closeRecovery();};
   $('recovery-download').onclick=()=>{
     if(recovery)download(JSON.stringify(recovery.row,null,2),'papercolab-local-draft.json','application/json');
   };
@@ -766,11 +779,11 @@
     if(!recovery||!window.confirm('Permanently remove this local draft?'))return;
     const row=recovery.row;
     if(!await store.remove(row.id,row.stamp))throw Error('Stored record changed; reopen the list.');
-    localRecords.delete(row.id);closeRecovery();await listRecovery();
-  });
+    closeRecovery();await listRecovery();
+  },false,true);
 
   $('refresh-manuscript').onclick=()=>act(()=>openProject(detail.id));
-  window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
+  window.addEventListener('beforeunload',event=>{if(dirty||(recovery&&$('recovery-result').value!==normalise(recovery.row.after))){event.preventDefault();event.returnValue='';}});
   $('live-enabled').onchange=()=>{if($('live-enabled').checked)ensureLive();else stopLive();};
   window.addEventListener('pagehide',stopLive);
   setInterval(poll,2500);
