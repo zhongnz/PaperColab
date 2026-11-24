@@ -15,7 +15,7 @@ def build_diagnostic(text):
         ("output-write-failure",r"i can't write on file|cannot write (?:on|to) file|permission denied|no space left on device"),
         ("package-conflict",r"option clash for package|command .{0,100}already defined|already defined\."),
         ("unicode-character",r"unicode character .{0,120}not set up|invalid utf-8 byte"),
-        ("missing-bibliography-data", r"i couldn't open database file|couldn't open style file|bibtex.{0,80}(?:failed|error)|bibliography file .{0,120}(?:not found|missing)|(?:bibtex|biber).{0,100}cannot find"),
+        ("missing-bibliography-data", r"supplied bibliography leaves undefined citations|i couldn't open database file|couldn't open style file|bibtex.{0,80}(?:failed|error)|bibliography file .{0,120}(?:not found|missing)|(?:bibtex|biber).{0,100}cannot find"),
         ("missing-file", r"(?:latex|package .{0,80}) error: file .{0,200}not found|i can't find file|file .{0,200}not found"),
         ("shell-escape-required", r"(?:requires?|must (?:enable|use)|need(?:s|ed)?) [^\n]{0,80}(?:shell.escape|write18)|(?:shell.escape|write18) [^\n]{0,60}(?:required|not enabled|must be enabled)|(?:minted|pygmentize)[^\n]{0,120}(?:not installed|not found|disabled)"),
         ("font-or-engine", r"fontspec error|requires.{0,100}(?:xelatex|lualatex)|font .{0,100}not found"),

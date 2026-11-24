@@ -38,11 +38,15 @@ class CorpusBenchmarkTests(unittest.TestCase):
             row.update(status="pass",baseline="pass",roundtrip="pass",edited_build="pass",
                        coverage={"editableParagraphs":1,"fallbackParagraphs":3},
                        root="main.tex",edit_target="main.tex",pdf_marker_verified=True,compiler_image_verified=True,
+                       baseline_profile={"bibliography":"normal","eps_converted":0},
+                       edited_profile={"bibliography":"normal","eps_converted":0},
                        baseline_pdf_sha256="a"*64,edited_zip_sha256="b"*64,
                        edited_pdf_sha256="c"*64,zip_sha256="d"*64)
         summary=summarize(rows,papers)
         self.assertTrue(summary["gate_met"])
         self.assertEqual(summary["paragraph_coverage"],0.25)
+        rows[0]["edited_profile"]={"bibliography":"normal","eps_converted":1}
+        with self.assertRaises(ValueError):summarize(rows,papers)
 
     @unittest.skipUnless(shutil.which("node"),"Node required for shared editor benchmark")
     def test_multifile_roundtrip(self):
@@ -84,6 +88,9 @@ class CorpusBenchmarkTests(unittest.TestCase):
             ("restricted \\write18 enabled.\nSome unrelated output","unclassified"),
             ("Package minted Error: You must enable shell escape.","shell-escape-required"),
             ("No file main.bbl.\n! LaTeX Error: File missing.sty not found.","missing-file"),
+            ("Package pdftex.def Error: File 'plot-eps-converted-to.pdf' not found","eps-conversion-required"),
+            ("! LaTeX Error: Option clash for package graphicx.","package-conflict"),
+            ("! I can't write on file 'sections/a.aux'.","output-write-failure"),
             ("some manuscript content","unclassified")]
         for message,expected in cases:
             self.assertEqual(build_diagnostic(message),expected)

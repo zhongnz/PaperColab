@@ -20,6 +20,11 @@ def summarize(rows, papers):
                or row.get("pdf_marker_verified") is not True or row.get("compiler_image_verified") is not True
                or not row.get("coverage") or row["coverage"].get("editableParagraphs",0)<1
                or not row.get("root") or not row.get("edit_target")
+               or not isinstance(row.get("baseline_profile"),dict) or row["baseline_profile"]!=row.get("edited_profile")
+               or set(row["baseline_profile"])!={"bibliography","eps_converted"}
+               or row["baseline_profile"]["bibliography"] not in ("normal","supplied-bbl")
+               or type(row["baseline_profile"]["eps_converted"]) is not int
+               or not 0<=row["baseline_profile"]["eps_converted"]<=8
                or any(not re.fullmatch(r"[a-f0-9]{64}",str(row.get(k,""))) for k in
                       ("zip_sha256","baseline_pdf_sha256","edited_zip_sha256","edited_pdf_sha256"))):
             raise ValueError("Incomplete claimed pass.")

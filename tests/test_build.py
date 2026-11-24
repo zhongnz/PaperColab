@@ -131,6 +131,12 @@ class TrustedFixtureBuildTests(unittest.TestCase):
             self.assertIn("Supplied reference",(path/"source/main.bbl").read_text())
             self.assertNotIn("undefined citations",(path/"output/main.log").read_text().lower())
 
+    def test_supplied_bibliography_does_not_hide_missing_citations(self):
+        data=archive([("main.tex",r"\documentclass{article}\begin{document}See \cite{unknown}.\bibliographystyle{plain}\bibliography{unavailable}\end{document}"),
+                      ("main.bbl",r"\begin{thebibliography}{1}\bibitem{known} A. Author. Supplied reference.\end{thebibliography}")])
+        with tempfile.TemporaryDirectory() as tmp,self.assertRaisesRegex(ValueError,"undefined citations"):
+            build_worker.build(data,"main.tex","pdflatex",Path(tmp))
+
     @unittest.skipUnless(shutil.which("gs"),"requires Ghostscript")
     def test_eps_recovery_without_shell_escape(self):
         data=archive([("main.tex",r"\documentclass{article}\usepackage{graphicx}\begin{document}\includegraphics[width=2cm]{figures/plot.eps}\end{document}"),

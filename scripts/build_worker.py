@@ -202,6 +202,15 @@ def build(data, root, engine, work, report=None):
             tail = stream.read().decode("utf-8", "replace")
         detail = b"".join(first).decode("utf-8","replace")
         raise ValueError("TeX build failed.\n" + detail + "\n" + tail)
+    if supplied_bbl:
+        final_log=out/(main.stem+".log")
+        # Do not present a successful-looking PDF with missing citations
+        # merely because a supplied .bbl prevented bibliography regeneration.
+        if final_log.is_file():
+            with final_log.open("rb") as stream:
+                for line in stream:
+                    if re.search(rb"(?:Citation .{0,300}undefined|There were undefined citations)",line,re.I):
+                        raise ValueError("Supplied bibliography leaves undefined citations.")
     if not 5 < pdf.stat().st_size <= 64 * MIB:
         raise ValueError("PDF is empty or exceeds 64 MiB.")
     contents = pdf.read_bytes()

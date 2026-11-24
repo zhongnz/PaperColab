@@ -195,7 +195,7 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
         pdf=folder/"edited.pdf"
         built=run([sys.executable,"scripts/check_build.py","--root",root,"--engine",engine,"--pdf",str(pdf),str(edited)])
         result.update(edited_build="pass",edited_pdf_sha256=sha(pdf),edited_profile=build_metadata(built.encode()))
-        if result["baseline_profile"]!=result["edited_profile"]:
+        if result["baseline_profile"] is None or result["baseline_profile"]!=result["edited_profile"]:
             result["status"]="build-profile-changed"
             return result
         stage="pdf-marker"

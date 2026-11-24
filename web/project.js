@@ -1337,7 +1337,8 @@
       if(generation!==previewGeneration||detail?.id!==project||token!==credential)return;
       previewResult=result;
       $('preview-identity').textContent='Root: '+result.root+'\nEngine: '+result.engine+'\nRevision: '+result.revision+
-        '\nSource ZIP SHA-256: '+result.source_sha256+(result.pdf_sha256?'\nPDF SHA-256: '+result.pdf_sha256:'');
+        '\nSource ZIP SHA-256: '+result.source_sha256+(result.pdf_sha256?'\nPDF SHA-256: '+result.pdf_sha256:'')+
+        (result.build_profile?'\nBibliography: '+result.build_profile.bibliography+'\nEPS figures converted: '+result.build_profile.eps_converted:'');
       $('preview-provenance').hidden=false;
       if(result.status==='failed'){
         $('preview-diagnostic').textContent=result.diagnostic;$('preview-diagnostic').hidden=false;

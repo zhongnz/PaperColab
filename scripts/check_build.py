@@ -35,8 +35,13 @@ def clean_log(raw):
 def build_metadata(raw):
     # Worker reports only bounded known fields. Never surface a random
     # manuscript log line as structured execution metadata.
-    for line in reversed(raw.decode("utf-8","replace").splitlines()):
-        if not line.startswith("PAPERCOLAB_BUILD_V1 "):continue
+    lines=raw.decode("utf-8","replace").splitlines()
+    # The worker emits exactly one record before its error message.
+    # A duplicate (including anything impersonated in a TeX log) is not
+    # evidence of the actual build profile.
+    records=[line for line in lines if line.startswith("PAPERCOLAB_BUILD_V1 ")]
+    if len(records)!=1:return None
+    for line in records:
         try:
             value=json.loads(line[len("PAPERCOLAB_BUILD_V1 "):])
             if (isinstance(value,dict) and set(value)=={"bibliography","eps_converted"} and
