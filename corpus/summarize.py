@@ -27,6 +27,7 @@ def summarize(rows, papers):
     for row in rows:
         counts[row["status"]]=counts.get(row["status"],0)+1
     diagnostics={}
+    recovered=[r["index"] for r in rows if r["status"]=="pass" and (r.get("baseline_profile") or {}).get("eps_converted",0)>0]
     for row in rows:
         if row.get("build_diagnostic"):
             key=row["build_diagnostic"]
@@ -35,7 +36,7 @@ def summarize(rows, papers):
     editable=sum(c["editableParagraphs"] for c in inspected)
     fallback=sum(c["fallbackParagraphs"] for c in inspected)
     return {"papers":20,"passed":counts.get("pass",0),"gate_met":counts.get("pass",0)>=18,
-            "status_counts":counts,"build_diagnostics":diagnostics,"coverage_papers":len(inspected),
+            "status_counts":counts,"build_diagnostics":diagnostics,"eps_recovered_passes":recovered,"coverage_papers":len(inspected),
             "editable_paragraphs":editable,"fallback_paragraphs":fallback,
             "paragraph_coverage":editable/(editable+fallback) if editable+fallback else None,
             "coverage_note":"Among classified paragraph ranges in inspected sources only; full-file fallbacks and unreadable sources may be uncounted.",

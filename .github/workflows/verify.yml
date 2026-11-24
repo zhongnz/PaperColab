@@ -67,6 +67,8 @@ jobs:
           name: browser-edited-project
           path: build
       - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils
+      - name: Verify isolated EPS recovery and supplied bibliography
+        run: python tests/eps_build_fixture.py
       - name: Compile the browser export and check its edited text
         run: |
           python scripts/check_build.py --root estuary/main.tex --pdf build/editor-edited.pdf build/editor-edited.zip

@@ -13,7 +13,7 @@ import uuid
 import zipfile
 from pathlib import PurePosixPath
 
-from scripts.check_build import command, clean_log, MIB
+from scripts.check_build import command, clean_log, MIB, build_metadata
 from scripts.build_worker import valid_path, ENGINES
 from scripts.build_diagnostics import explain
 from server.service import ServiceError
@@ -71,7 +71,9 @@ def compile_bundle(archive,root,engine):
         if result.tell()>MAX_BUNDLE:
             raise ValueError("Preview bundle exceeds its size limit.")
         result.seek(0)
-        return decode_bundle(result.read(MAX_BUNDLE+1))
+        value=decode_bundle(result.read(MAX_BUNDLE+1))
+        value["build_profile"]=build_metadata(proc.stderr)
+        return value
 
 
 class Preview:

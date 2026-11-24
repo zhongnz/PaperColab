@@ -11,6 +11,10 @@ def build_diagnostic(text):
              and not re.search(r"^\s*(?:pdflatex|xelatex|lualatex|latexmk)\s",line)]
     text = "\n".join(lines)
     patterns = (
+        ("eps-conversion-required",r"eps-converted-to\.pdf.{0,80}(?:not found|does not exist)|logfile claimed conversion from .{0,200}\.eps.{0,200}output file does not exist|eps conversion (?:requires|exceeded|did not produce)"),
+        ("output-write-failure",r"i can't write on file|cannot write (?:on|to) file|permission denied|no space left on device"),
+        ("package-conflict",r"option clash for package|command .{0,100}already defined|already defined\."),
+        ("unicode-character",r"unicode character .{0,120}not set up|invalid utf-8 byte"),
         ("missing-bibliography-data", r"i couldn't open database file|couldn't open style file|bibtex.{0,80}(?:failed|error)|bibliography file .{0,120}(?:not found|missing)|(?:bibtex|biber).{0,100}cannot find"),
         ("missing-file", r"(?:latex|package .{0,80}) error: file .{0,200}not found|i can't find file|file .{0,200}not found"),
         ("shell-escape-required", r"(?:requires?|must (?:enable|use)|need(?:s|ed)?) [^\n]{0,80}(?:shell.escape|write18)|(?:shell.escape|write18) [^\n]{0,60}(?:required|not enabled|must be enabled)|(?:minted|pygmentize)[^\n]{0,120}(?:not installed|not found|disabled)"),
@@ -29,6 +33,10 @@ def build_diagnostic(text):
 
 
 GUIDANCE={
+    "eps-conversion-required":"The manuscript appears to need an EPS conversion. Use conventional local figure paths and supplied compatible PDFs; arbitrary shell escape stays disabled.",
+    "output-write-failure":"Check generated-file paths and the bounded output directory. Absolute or escaping paths and exhausted disk space cannot be repaired by granting broader write access.",
+    "package-conflict":"Check conflicting package options or duplicate command declarations against the paper's original TeX Live version.",
+    "unicode-character":"Check the manuscript's original encoding and compiler requirements; do not silently rewrite source bytes.",
     "missing-bibliography-data":"Check that the referenced bibliography files or the required prebuilt bibliography are present in the ZIP. Do not silently replace references.",
     "missing-file":"Inspect the first missing file in the log. Restore omitted project dependencies or check the selected root and its relative paths.",
     "shell-escape-required":"This build requests an external command or shell escape. Pre-generate the necessary artifacts in a trusted environment; shell escape stays disabled.",
@@ -45,3 +53,17 @@ GUIDANCE={
 def explain(text):
     code=build_diagnostic(text)
     return {"category":code,"guidance":GUIDANCE[code]}
+
+
+def dependency_details(text):
+    """Allowlisted, bounded diagnostic details for the public corpus.
+
+    Only conventional dependency basenames/extensions and package names;
+    never arbitrary log lines, absolute paths, source snippets or commands.
+    """
+    missing=set()
+    for match in re.finditer(r"\bfile\s+[\x60'\"]?(?:[A-Za-z0-9_.-]+/)*([A-Za-z0-9_][A-Za-z0-9_.-]{0,100}\.(?:sty|cls|bst|bib|bbl|tex|ltx|pdf|png|jpg|jpeg|eps|tfm|otf|ttf))[\x60'\"]?\s+(?:not found|does not exist)",text,re.I):
+        missing.add(match.group(1))
+        if len(missing)>=8:break
+    packages=set(re.findall(r"\bPackage ([A-Za-z0-9][A-Za-z0-9_.-]{0,40}) Error:",text,re.I)[:8])
+    return {"missing_dependencies":sorted(missing),"error_packages":sorted(packages)}

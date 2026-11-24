@@ -9,6 +9,7 @@ on:
       - 'web/inspect.js'
       - 'scripts/check_build.py'
       - 'scripts/build_worker.py'
+      - 'scripts/build_diagnostics.py'
       - '.github/workflows/corpus.yml'
 permissions:
   contents: read

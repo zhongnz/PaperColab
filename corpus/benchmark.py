@@ -28,20 +28,24 @@ def sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-from scripts.build_diagnostics import build_diagnostic
+from scripts.build_diagnostics import build_diagnostic, dependency_details
+from scripts.check_build import build_metadata
 
 
 class CommandFailure(RuntimeError):
-    def __init__(self, returncode, diagnostic):
+    def __init__(self, returncode, diagnostic, details=None, profile=None):
         super().__init__("command failed (" + str(returncode) + ")")
         self.diagnostic = diagnostic
+        self.details=details or {}
+        self.profile=profile
 
 
 def run(args, timeout=180):
     result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=timeout)
     if result.returncode:
-        raise CommandFailure(result.returncode,build_diagnostic(result.stderr[-32000:]))
+        raise CommandFailure(result.returncode,build_diagnostic(result.stderr[-32000:]),
+                             dependency_details(result.stderr[-32000:]),build_metadata(result.stdout.encode()))
     return result.stdout
 
 
@@ -175,8 +179,8 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
         result["engine"]=engine
         stage="baseline-build"
         baseline=folder/"baseline.pdf"
-        run([sys.executable,"scripts/check_build.py","--root",root,"--engine",engine,"--pdf",str(baseline),str(archive)])
-        result.update(baseline="pass",baseline_pdf_sha256=sha(baseline))
+        built=run([sys.executable,"scripts/check_build.py","--root",root,"--engine",engine,"--pdf",str(baseline),str(archive)])
+        result.update(baseline="pass",baseline_pdf_sha256=sha(baseline),baseline_profile=build_metadata(built.encode()))
         stage="target-selection"
         target=choose_target(archive,selected)
         if not target:
@@ -189,8 +193,11 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
         result.update(roundtrip="pass",edited_zip_sha256=sha(edited))
         stage="edited-build"
         pdf=folder/"edited.pdf"
-        run([sys.executable,"scripts/check_build.py","--root",root,"--engine",engine,"--pdf",str(pdf),str(edited)])
-        result.update(edited_build="pass",edited_pdf_sha256=sha(pdf))
+        built=run([sys.executable,"scripts/check_build.py","--root",root,"--engine",engine,"--pdf",str(pdf),str(edited)])
+        result.update(edited_build="pass",edited_pdf_sha256=sha(pdf),edited_profile=build_metadata(built.encode()))
+        if result["baseline_profile"]!=result["edited_profile"]:
+            result["status"]="build-profile-changed"
+            return result
         stage="pdf-marker"
         if not marker_present(run(["pdftotext",str(pdf),"-"],timeout=30)):
             result["status"]="pdf-marker-missing"
@@ -210,6 +217,9 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
         if stage in ("baseline-build","edited-build"):
             result["build_diagnostic"] = (error.diagnostic if isinstance(error,CommandFailure)
                 else "resource-or-time-limit" if isinstance(error,subprocess.TimeoutExpired) else "unclassified")
+            if isinstance(error,CommandFailure):
+                result["build_details"]=error.details
+                result["failed_build_profile"]=error.profile
         return result
 
 

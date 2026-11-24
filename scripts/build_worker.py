@@ -1,5 +1,6 @@
 """One TeX job inside the disposable verification container. The host sends a ZIP on stdin."""
 import io
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -77,7 +78,65 @@ def unpack(data, directory):
                 raise ValueError("Incomplete ZIP entry.")
 
 
-def build(data, root, engine, work):
+def eps_candidates(directory):
+    # Never use arbitrary TeX-supplied commands or path strings. Convert
+    # only ordinary archive members with conventional path components.
+    candidates=[]
+    for path in sorted(directory.rglob("*.eps")):
+        rel=path.relative_to(directory)
+        if not path.is_file() or path.is_symlink() or not all(
+                re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}",part) for part in rel.parts):
+            continue
+        dest=path.with_name(path.stem+"-eps-converted-to.pdf")
+        if dest.exists():
+            continue
+        candidates.append((path,dest))
+    if len(candidates)>8 or sum(p.stat().st_size for p,_ in candidates)>16*MIB:
+        return []
+    return candidates
+
+
+def needs_eps_conversion(log, directory):
+    # Positive evidence from latexmk's conversion message or a missing
+    # expected epstopdf output, not a generic shell-escape warning.
+    with log.open("rb") as stream:
+        head=stream.read(128*1024)
+        stream.seek(max(0,log.stat().st_size-128*1024))
+        tail=stream.read(128*1024)
+    text=(head+b"\n"+tail).decode("utf-8","replace")
+    for source,dest in eps_candidates(directory):
+        relative=dest.relative_to(directory).as_posix()
+        if re.search(r"File\s+[\x60'\"]?(?:\./)?"+re.escape(relative)+r"[\x60'\"]?\s+(?:not found|does not exist)",text,re.I) or (
+                "Logfile claimed conversion from" in text and relative in text and "Output file does not exist" in text):
+            return True
+    return False
+
+
+def convert_eps(directory):
+    candidates=eps_candidates(directory)
+    if not candidates or not shutil.which("gs"):
+        raise ValueError("EPS conversion requires Ghostscript and bounded conventional EPS paths.")
+    total=0
+    for path,dest in candidates:
+        # Fixed invocation, no project command line, no network or mounts.
+        # Both PostScript and Ghostscript run inside the existing container.
+        args=["gs","-dSAFER","-dBATCH","-dNOPAUSE","-dEPSCrop","-sDEVICE=pdfwrite",
+              "-sOutputFile="+str(dest),str(path)]
+        try:
+            result=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL,timeout=10,check=False)
+        except subprocess.TimeoutExpired:
+            raise ValueError("EPS conversion exceeded its time budget.") from None
+        if result.returncode or not dest.is_file() or not 5<dest.stat().st_size<=16*MIB:
+            raise ValueError("EPS conversion did not produce a bounded PDF.")
+        with dest.open("rb") as stream:
+            if stream.read(5)!=b"%PDF-":raise ValueError("Invalid converted EPS PDF.")
+        total+=dest.stat().st_size
+        if total>32*MIB:raise ValueError("Converted EPS files exceed 32 MiB.")
+    return len(candidates)
+
+
+def build(data, root, engine, work, report=None):
     root = re.sub(r"^(?:\./)+", "", root)
     if len(data) > 64 * MIB or engine not in ENGINES or not valid_path(root):
         raise ValueError("Unsupported archive, manuscript path or engine.")
@@ -93,15 +152,40 @@ def build(data, root, engine, work):
     if not main.is_file():
         raise ValueError("Selected root is missing from the archive.")
     log = work / "build.log"
+    supplied_bbl=main.with_suffix(".bbl").is_file() and not any(
+        p.is_file() and p.suffix.lower()==".bib" for p in src.rglob("*"))
+    if report is not None:
+        report.update(bibliography="supplied-bbl" if supplied_bbl else "normal",eps_converted=0)
     cmd = ["latexmk", "-norc", "-g", ENGINES[engine], "-interaction=nonstopmode", "-halt-on-error",
            "-file-line-error", "-latexoption=-no-shell-escape", "-outdir=" + str(out), main.name]
+    if supplied_bbl:
+        # Explicitly retain a supplied bibliography when the ZIP contains
+        # no source .bib. No fabricated references, no ignored errors.
+        cmd.insert(-1,"-bibtex-")
     if engine == "lualatex":
         cmd.insert(-1, "-latexoption=--safer")
     env = {**os.environ, "openin_any": "p", "openout_any": "p", "TEXMFOUTPUT": str(out)}
-    with log.open("wb") as stream:
-        run = subprocess.run(cmd, cwd=main.parent, env=env, stdin=subprocess.DEVNULL,
-                             stdout=stream, stderr=subprocess.STDOUT, check=False)
+    def compile_once():
+        # Some TeX versions need the output counterpart of an include
+        # subdirectory before writing that section's .aux.
+        for path in main.parent.rglob("*"):
+            if path.is_dir() and not path.is_symlink():
+                (out/path.relative_to(main.parent)).mkdir(parents=True,exist_ok=True)
+        with log.open("wb") as stream:
+            return subprocess.run(cmd, cwd=main.parent, env=env, stdin=subprocess.DEVNULL,
+                                  stdout=stream, stderr=subprocess.STDOUT, check=False)
+    run=compile_once()
     pdf = out / (main.stem + ".pdf")
+    if run.returncode and engine=="pdflatex" and needs_eps_conversion(log,main.parent):
+        # Restart from the exact input ZIP, not potentially changed or
+        # partially generated files. Never publish the generated assets
+        # back into the manuscript or source archive.
+        shutil.rmtree(src);shutil.rmtree(out)
+        src.mkdir();out.mkdir()
+        unpack(data,src)
+        count=convert_eps(main.parent)
+        if report is not None:report["eps_converted"]=count
+        run=compile_once()
     if run.returncode or not pdf.is_file():
         # latexmk's tail often contains only a generic status. Retain the
         # first explicit TeX error and a few continuation lines for local
@@ -171,7 +255,11 @@ if __name__ == "__main__":
         raise SystemExit("Start the isolated job with scripts/check_build.py.")
     try:
         with tempfile.TemporaryDirectory(dir="/work") as tmp:
-            pdf = build(sys.stdin.buffer.read(64 * MIB + 1), sys.argv[1], sys.argv[2], Path(tmp))
+            report={}
+            try:
+                pdf = build(sys.stdin.buffer.read(64 * MIB + 1), sys.argv[1], sys.argv[2], Path(tmp),report)
+            finally:
+                print("PAPERCOLAB_BUILD_V1 "+json.dumps(report,separators=(",",":")),file=sys.stderr)
             sys.stdout.buffer.write(preview_bundle(pdf,Path(tmp)) if sys.argv[3:]==["preview"] else pdf)
     except (ValueError, OSError, RuntimeError, zipfile.BadZipFile) as error:
         print(str(error), file=sys.stderr)
