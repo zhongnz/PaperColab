@@ -18,6 +18,8 @@ The SQLite database is `data/papercolab.sqlite`. An operator can back it up, res
 
 Open **web/index.html** and select **Open example editor**. For your own paper, choose a project ZIP, select a manuscript root and click **Edit manuscript**. The outline lists the files and blocks. Choose a paragraph or section heading to edit.
 
+- Document view opens a continuous file of editable paragraphs and headings. Switch to Cells to expose the same blocks individually, with formatting, source and revert controls. Each supported cell can open its own LaTeX draft, and a valid apply updates the visual text. Unapplied drafts block export and view or file changes.
+- Block source and Split operate on the selected outline block. These four views share the offline file's original-source edit map; they are not four independent documents. The full project remains exportable as LaTeX. Whole-file structural source editing and live co-authoring are not provided by this offline increment.
 - Type in the visual pane or use bold and italic. The LaTeX pane follows each visual change. Citations, references and inline maths appear as protected tokens.
 - To change a token or fine-tune source, edit the LaTeX pane and click **Apply source**. Invalid or multi-block source stays in the draft until corrected or discarded.
 - Tables, display equations, custom macros, preambles and complex blocks appear as read-only LaTeX. **Revert block** restores its exact input. Visual undo and redo operate within the current block.

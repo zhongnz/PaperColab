@@ -75,6 +75,13 @@
           <nav id="block-list" aria-label="Blocks in this file"></nav>
         </aside>
         <div class="sheet">
+          <div id="editor-views" role="group" aria-label="Editor view">
+            <button type="button" data-view="document" aria-pressed="true">Document</button>
+            <button type="button" data-view="cells" aria-pressed="false">Cells</button>
+            <button type="button" data-view="source" aria-pressed="false">Block source</button>
+            <button type="button" data-view="split" aria-pressed="false">Split</button>
+          </div>
+          <div id="multi-surface" hidden></div>
           <p id="block-empty" hidden>No blocks in this file.</p>
           <article id="block-detail">
             <header class="block-head"><div><p class="block-locator" id="block-context"></p><h2 id="block-title"></h2></div>

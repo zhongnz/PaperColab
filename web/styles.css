@@ -136,3 +136,29 @@ button:disabled{cursor:default;opacity:.46}
  #open-editor{margin:8px 0}
  .split{grid-template-columns:1fr}
 }
+
+/* Shared manuscript views. Document mode keeps cell chrome out of the prose. */
+#editor-views{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:24px}
+#editor-views button,.cell-header button,.cell-source button{font:inherit;font-size:.76rem;padding:5px 9px;border:1px solid var(--line);border-radius:4px;background:#fcfcf8;color:var(--ink)}
+#editor-views button[aria-pressed="true"]{background:#e3eadd;border-color:var(--green);font-weight:650}
+.manuscript-surface{min-width:0}
+.manuscript-cell{min-width:0;position:relative;overflow-wrap:anywhere}
+.manuscript-cell .visual-prose{min-height:0;padding:8px 12px;line-height:1.7}
+.manuscript-cell.cell-heading .visual-prose{font-size:1.55rem;font-weight:650;line-height:1.35}
+.cell-header{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:4px 8px;color:var(--muted);font-size:.74rem}
+.cell-header span{margin-right:auto}
+.document .cell-header{opacity:0}
+.document .manuscript-cell:focus-within .cell-header,.document .manuscript-cell:hover .cell-header{opacity:1}
+.document .cell-raw .cell-header{display:none}
+.document .manuscript-cell{border-left:2px solid transparent}
+.document .manuscript-cell:focus-within{border-color:var(--green)}
+.cells .manuscript-cell{border:1px solid var(--line);border-radius:6px;margin-bottom:12px;background:#fffefa}
+.cells .cell-header{background:#edf1e9;border-radius:6px 6px 0 0}
+.cells .active-cell{border-color:var(--green)}
+.cell-raw details{font-size:.81rem;color:var(--muted);padding:7px 12px}
+.cell-raw pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
+.cell-source{padding:10px;background:#f1f3ed;border-top:1px solid var(--line)}
+.cell-source textarea{display:block;width:100%;resize:vertical;font:.85rem/1.6 var(--mono);margin-bottom:8px;padding:8px}
+.cell-source button{margin-right:6px}
+.cell-status{font-size:.8rem;color:var(--muted);margin:6px 0 0}
+@media (hover:none){.document .cell-header{opacity:1}}
