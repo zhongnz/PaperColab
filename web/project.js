@@ -9,8 +9,16 @@
   let viewMode='focused', cellViews=new Map(), multiDrafts=new Map();
   const B=PaperColabBlocks, E=PaperColabEditors;
   const isMulti=()=>viewMode!=='focused';
+  let crdtModule=null;
+  function updateTransportControl(){
+    const supported=Boolean(me?.experimental_crdt&&directAllowed());
+    $('crdt-option').hidden=!supported;
+    $('crdt-enabled').disabled=busy||!supported;
+    if(!supported)$('crdt-enabled').checked=false;
+  }
   function freeze(value) {
     $('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=value;
+    updateTransportControl();
   }
   const normalise = value => value.replace(/\r\n?/g,'\n');
   function directAllowed() { return me?.kind === 'human' && ['author','lead'].includes(role()); }
@@ -77,6 +85,7 @@
   async function openProject(id) {
     const incoming = await api('GET', '/api/projects/' + id);
     detail = incoming;
+    updateTransportControl();
     $('open').hidden = false;
     $('project-title').textContent = detail.title;
     $('project-title').dataset.id = detail.id;
@@ -322,15 +331,29 @@
       const entry=mountHostedCell(base);cellViews.set(base.stableId,entry);host.append(entry.element);
     }
   }
+  async function saveCell(base,after,mode){
+    const endpoint='/api/projects/'+detail.id+'/blocks/'+base.stableId;
+    if(!$('crdt-enabled').checked||!base.rich){
+      return {result:await api('POST',endpoint+'/edit',{version:base.version,before:base.quote,after,mode}),transport:'direct'};
+    }
+    // No silent fallback: a failed CRDT save leaves the draft intact.
+    if(!me?.experimental_crdt||!directAllowed())throw Error('Experimental collaboration is unavailable.');
+    const state=await api('GET',endpoint+'/crdt');
+    if(state.version!==base.version||state.quote!==base.quote)
+      throw Error('This cell changed remotely. Your draft has not been saved.');
+    crdtModule??=await import('/experimental/crdt-browser.js');
+    const update=crdtModule.incrementalUpdate(state,base.quote,after);
+    const result=await api('POST',endpoint+'/crdt',{version:state.version,epoch:state.epoch,update});
+    return {result,transport:'Yjs'};
+  }
   async function commitHostedCell(base, action) {
     const entry=multiDrafts.get(base.stableId);
     if(!entry?.valid) return;
     if(action==='direct'&&!directAllowed()) return;
-    let next=base;
+    let next=base,transport='direct';
     if(action==='direct') {
-      const result=await api('POST','/api/projects/'+detail.id+'/blocks/'+base.stableId+'/edit',
-        {version:base.version,before:base.quote,after:entry.after,mode:entry.mode});
-      next=result.block;
+      const saved=await saveCell(base,entry.after,entry.mode);
+      next=saved.result.block;transport=saved.transport;
     } else {
       const result=await api('POST','/api/projects/'+detail.id+'/suggestions',
         {block_id:base.stableId,base_revision:detail.revision,before:base.quote,after:entry.after,mode:entry.mode});
@@ -342,7 +365,7 @@
       detail.blocks=detail.blocks.map(b=>b.stableId===next.stableId?next:b);
       replaceHostedCell(next);draftState(true);
     }
-    say(action==='direct'?'Cell saved; other local drafts retained.':'Cell proposal recorded; other local drafts retained.');
+    say(action==='direct'?'Cell saved via '+transport+'; other local drafts retained.':'Cell proposal recorded; other local drafts retained.');
   }
   for(const button of $('hosted-views').querySelectorAll('[data-view]')) button.onclick=()=>{
     if(busy||button.dataset.view===viewMode) return;
@@ -391,12 +414,10 @@
     if (!selected || !directAllowed() || !dirty) return;
     const eol=selected.quote.match(/\r\n|\r|\n/)?.[0] ?? fileText.match(/\r\n|\r|\n/)?.[0] ?? '\n';
     const after=sourceDirty ? source.value().replace(/\n/g,eol) : sourceDraft;
-    await api('POST','/api/projects/'+detail.id+'/blocks/'+selected.stableId+'/edit',{
-      version:selected.version,before:selected.quote,after,mode:sourceDirty?'source':'visual'
-    });
+    const saved=await saveCell(selected,after,sourceDirty?'source':'visual');
     draftState(false);
     await openProject(detail.id);
-    say('Cell saved directly. Other sessions will receive the revision.');
+    say('Cell saved via '+saved.transport+'. Other sessions will receive the revision.');
   }
   async function poll() {
     if(!detail || busy || polling) return;
@@ -463,6 +484,7 @@
     act(async()=>{
       const previous=detail?.id;
       destroyEditors(); detail=null; selected=null; fileText='';
+      $('crdt-enabled').checked=false;updateTransportControl();
       $('open').hidden=true;
       token=next;sessionStorage.setItem('papercolab-token',token);$('token').value=token;$('actor').value=token;
       await refresh();

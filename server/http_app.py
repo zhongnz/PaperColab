@@ -41,7 +41,8 @@ class Api:
         bits = [part for part in path.split("/") if part]
         # /api/...
         if bits[:2] == ["api", "me"] and method == "GET":
-            return {"id": actor["id"], "name": actor["name"], "kind": actor["kind"], "workspace_role": actor["workspace_role"]}
+            return {"id": actor["id"], "name": actor["name"], "kind": actor["kind"], "workspace_role": actor["workspace_role"],
+                    "experimental_crdt": self.service.crdt and (ROOT / "experiments/crdt/browser.bundle.js").is_file()}
         if bits[:2] == ["api", "projects"] and len(bits) == 2 and method == "GET":
             return self.service.projects(actor)
         if bits[:2] == ["api", "projects"] and len(bits) == 2 and method == "POST":
@@ -136,6 +137,12 @@ class Api:
         return ServiceError(404, "Unknown API route.")
 
     def static(self, path):
+        if path in {"/experimental/crdt-browser.js", "/experimental/crdt-NOTICES.txt"}:
+            name = "browser.bundle.js" if path.endswith(".js") else "browser-NOTICES.txt"
+            candidate = ROOT / "experiments" / "crdt" / name
+            if not self.service.crdt or not candidate.is_file():
+                return 404, {"error": "Experimental browser collaboration is unavailable."}
+            return 200, {"file": str(candidate), "type": "text/javascript; charset=utf-8" if path.endswith(".js") else "text/plain; charset=utf-8"}
         relative = "project.html" if path in {"/", ""} else path.lstrip("/")
         candidate = (WEB / relative).resolve()
         if WEB.resolve() not in candidate.parents and candidate != WEB.resolve():

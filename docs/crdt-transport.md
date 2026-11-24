@@ -37,3 +37,27 @@ CI executes actual HTTP calls with separate author tokens, invalid and
 unauthorised updates, stale/replay handling, source rejection, restart recovery
 and epoch invalidation. This is a foundation for a later authenticated
 WebSocket prototype, not a production collaborative service.
+
+## Optional hosted browser bridge
+
+After installing root and experiment dependencies, run:
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund
+npm install --prefix experiments/crdt --ignore-scripts --no-audit --no-fund
+node experiments/crdt/build-browser.mjs
+PAPERCOLAB_DEMO=1 PAPERCOLAB_EXPERIMENTAL_CRDT=1 python3 -m server
+```
+
+Select a human author or lead and enable **Experimental Yjs saves** in the
+hosted manuscript. Focused, Document and Cells views use the same save bridge
+for editable prose/heading cells. The bridge hydrates a replica at save time,
+checks the base version and quote, computes a Unicode-safe changed span and
+sends an incremental update. No automatic fallback after a failed experimental
+save; the user retains the draft. Raw scientific cells and proposals retain the
+existing paths. The server still polls accepted revisions; this is explicit
+checkpoint collaboration, NOT character-level real-time editing, durable local
+replicas or WebSockets. The optional bundle and third-party notices are built
+locally and served only in the enabled loopback experiment. No CDN or production
+bundle changes. The browser test exercises visual and LaTeX saves, two sessions,
+stale-draft retention and accepted checkpoint audit records.
