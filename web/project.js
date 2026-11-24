@@ -305,6 +305,11 @@
 
   async function openProject(id) {
     if(live&&live.project!==id)stopLive();
+    if(detail?.id!==id){
+      $('delegate-instructions').value='';
+      $('delegated-token').value='';$('delegated-credential').hidden=true;
+      for(const option of $('delegate-context').options)option.selected=false;
+    }
     closeRecovery();
     const incoming = await api('GET', '/api/projects/' + id);
     detail = incoming;
@@ -388,6 +393,10 @@
     say('Delegated task created. Copy its restricted credential now; it is not shown again.');
   });
   $('hide-delegated-token').onclick=()=>{$('delegated-token').value='';$('delegated-credential').hidden=true;};
+  $('refresh-agent-tasks').onclick=()=>act(async()=>{
+    await openProject(detail.id);
+    say('Task and review status refreshed.');
+  });
   function renderQueue() {
     const queue = $('queue');
     queue.replaceChildren();

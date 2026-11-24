@@ -32,13 +32,19 @@ class Api:
                 if bits[3] == "context" and method == "GET":
                     return 200, self.service.delegated_context(bits[2], token)
                 if bits[3] == "proposal" and method == "POST":
-                    data = json.loads(body.decode() or "{}")
+                    from server.service import ServiceError
+                    try:
+                        data = json.loads(body.decode() or "{}")
+                    except (ValueError, UnicodeError):
+                        raise ServiceError(400, "Invalid delegated proposal JSON.")
                     if not isinstance(data, dict) or set(data) != {"after", "rationale", "evidence_ids"}:
-                        from server.service import ServiceError
                         raise ServiceError(400, "Only after, rationale and evidence_ids are allowed.")
                     return 200, self.service.delegated_proposal(bits[2], token, data["after"], data["rationale"], data["evidence_ids"])
                 raise self._missing()
             if path.startswith("/api/"):
+                if token.startswith("pc-task-"):
+                    from server.service import ServiceError
+                    raise ServiceError(401, "A delegated credential is restricted to its task.")
                 actor = self.service.actor_by_token(token)
                 return 200, self.route(method, path, query, headers, body, actor)
             if method == "GET":

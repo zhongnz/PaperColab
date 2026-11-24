@@ -158,6 +158,43 @@ def exercise(browser, port, width):
         expect(paragraph.locator(".visual-prose")).to_contain_text("Independent")
         page.get_by_role("button", name="Focused", exact=True).click()
         expect(page.locator("#focused-cell")).to_be_visible()
+        page.locator("#actor").select_option("demo-ada")
+        expect(page.locator("#who")).to_contain_text("Ada")
+        expect(page.locator("#delegate-form")).to_be_visible()
+        page.locator("#delegate-cell").select_option(stable_id)
+        page.locator("#delegate-assistant").select_option(label="Quill")
+        context_ids=page.locator("#delegate-context option").evaluate_all("(options)=>options.map(o=>o.value)")
+        assert context_ids
+        page.locator("#delegate-context").select_option(context_ids[0])
+        page.locator("#delegate-instructions").fill("Clarify the sampling description without changing other cells.")
+        page.get_by_role("button",name="Create delegated task").click()
+        expect(page.locator("#delegated-credential")).to_be_visible()
+        task_id=page.locator("#delegated-task-id").inner_text()
+        secret=page.locator("#delegated-token").input_value()
+        assert task_id and secret.startswith("pc-task-")
+        endpoint=f"http://127.0.0.1:{port}/api/delegated/{task_id}"
+        headers={"Authorization":"Bearer "+secret}
+        result=page.request.get(endpoint+"/context",headers=headers)
+        assert result.ok
+        task=result.json()
+        assert task["cell"]["id"]==stable_id
+        assert [o["id"] for o in task["context"]]==[context_ids[0]]
+        after=task["cell"]["source"].replace("two readings","three readings")
+        assert after!=task["cell"]["source"]
+        result=page.request.post(endpoint+"/proposal",headers=headers,
+            data={"after":after,"rationale":"Fixture proposal from restricted task client.","evidence_ids":context_ids[:1]})
+        assert result.ok
+        expect(page.get_by_role("textbox",name="Visual block text")).not_to_contain_text("three readings")
+        page.get_by_role("button",name="Hide credential").click()
+        expect(page.locator("#delegated-token")).to_have_value("")
+        page.get_by_role("button",name="Refresh tasks and review").click()
+        expect(page.locator("#agent-task-list")).to_contain_text("Quill · pending")
+        review=page.locator("#queue article").filter(has_text="Fixture proposal from restricted task client.")
+        expect(review).to_contain_text("Original source:")
+        expect(review).to_contain_text("Proposed source:")
+        review.get_by_role("button",name="Accept",exact=True).click()
+        expect(page.locator("#agent-task-list")).to_contain_text("Quill · accepted")
+        expect(page.get_by_role("textbox",name="Visual block text")).to_contain_text("three readings")
     page.close()
     assert not errors, errors
 

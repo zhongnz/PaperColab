@@ -89,6 +89,9 @@ def make_handler(api):
 
         def respond(self):
             length = int(self.headers.get("content-length") or 0)
+            if self.path.split("?")[0].startswith("/api/delegated/") and length > 512 * 1024:
+                self._send(413, {"error": "Delegated request exceeds 512 KiB."})
+                return
             if self.path.split("?")[0].endswith("/presence") and length > 4096:
                 self._send(413, {"error": "Presence message too large."})
                 return

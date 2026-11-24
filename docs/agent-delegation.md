@@ -24,6 +24,12 @@ API or the legacy MCP-like dispatcher.
   new submissions, not review of a previously submitted proposal. Restoring
   a backup invalidates outstanding tasks and pending delegated proposals.
 
+The task and review panels can be refreshed explicitly to see submissions made
+by an external client; task lifecycle events do not currently increment the
+manuscript revision. Refreshing clears the one-time displayed credential.
+The hosted browser regression creates a task, uses its restricted credential
+through HTTP, and accepts the proposal through the human review panel.
+
 No automatic LLM invocation, no external network call, no arbitrary command
 execution, no cross-cell or structural proposal, no full-project discovery,
 no automatic evidence link creation. Rationale and evidence selections are
