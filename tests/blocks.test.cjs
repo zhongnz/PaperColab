@@ -262,3 +262,19 @@ test('archive reader retains local bibliography text without modifying ZIP',asyn
   assert.deepEqual(B.bibliographyKeys(files.get('references.bib').text),['local']);
   assert.strictEqual(await A.exportArchive(blob,new Map()),blob);
 });
+
+test('local raster preview resolves only explicit archive assets and reads bounded bytes',async()=>{
+  const writer=new zip.ZipWriter(new zip.BlobWriter(),{useWebWorkers:false});
+  const bytes=Uint8Array.from([137,80,78,71,13,10,26,10]);
+  await writer.add('project/figures/a.png',new zip.Uint8ArrayReader(bytes));
+  await writer.add('project/figures/a.svg',new zip.TextReader('<svg/>'));
+  const blob=await writer.close(), files=await A.readArchive(blob);
+  assert.deepEqual(A.rasterCandidates(files,'project/main.tex','project/sections/methods.tex','figures/a'),['project/figures/a.png']);
+  assert.deepEqual(A.rasterCandidates(files,'project/main.tex','project/sections/methods.tex','../figures/a'),[]);
+  assert.deepEqual(A.rasterCandidates(files,'project/main.tex','project/sections/methods.tex','figures/a.svg'),[]);
+  const image=await A.readRaster(blob,'project/figures/a.png');
+  assert.equal(image.type,'image/png');
+  assert.deepEqual(new Uint8Array(await image.arrayBuffer()),bytes);
+  await assert.rejects(()=>A.readRaster(blob,'project/figures/a.svg'),/Only PNG/);
+  assert.strictEqual(await A.exportArchive(blob,new Map()),blob);
+});

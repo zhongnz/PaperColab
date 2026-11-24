@@ -1,5 +1,6 @@
 """Edit through the real visual/source panes offline and compare the exported project bytes."""
 import argparse
+import base64
 import io
 from pathlib import Path
 import shutil
@@ -194,6 +195,24 @@ def exercise(browser, uri, width, screenshots, output_zip):
     page.get_by_role("button", name="Revert block").click()
     expect(visual).not_to_contain_text("Replicate samples.")
     expect(page.locator("#edit-count")).to_have_text("1 edited block")
+    # A second imported manuscript exercises local raster preview, including
+    # the single-file build's restrictive CSP. No asset is fetched remotely.
+    page.get_by_role("button", name="Archive report").click()
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as z:
+        z.writestr("main.tex", r"\documentclass{article}" + "\n" + r"\begin{document}" + "\n\n" +
+                   "Figure below.\n\n" + r"\begin{figure}\includegraphics{a.png}\caption{Sample image}\end{figure}" +
+                   "\n\n" + r"\end{document}")
+        z.writestr("a.png", base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/XqkAAAAASUVORK5CYII="))
+    page.on("dialog", lambda dialog: dialog.accept())
+    page.locator("#file").set_input_files({"name":"figure.zip","mimeType":"application/zip","buffer":stream.getvalue()})
+    page.get_by_role("heading", name="figure.zip", exact=True).wait_for()
+    page.get_by_role("button", name="Edit manuscript").click()
+    page.get_by_role("button", name="Preview local image").click()
+    image = page.get_by_role("img", name="Sample image")
+    expect(image).to_be_visible()
+    assert image.evaluate("(img) => img.complete && img.naturalWidth === 1")
+    assert image.get_attribute("src").startswith("blob:")
     assert not remote, remote
     assert not errors, errors
     context.close()

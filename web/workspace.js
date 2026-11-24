@@ -5,7 +5,8 @@
   const B = PaperColabBlocks, editors = PaperColabEditors;
   let session, files = new Map(), path, block, visual, source, pending = false, exporting = false;
   let saved = new Map(), onClose, downloadFile;
-  let sourcePending = false, splitPanel = null;
+  let sourcePending = false, splitPanel = null, manuscriptRoot = '';
+  let previewUrls = new Set(), previewGeneration = 0;
   let mode = 'document', mounted = new Map(), drafts = new Map(), structuralHistory = new Map();
   const checkpointChanged = (name, part) => part.original !== session.data.files.get(name).text;
   const multi = () => mode === 'document' || mode === 'cells';
@@ -40,6 +41,9 @@
   }
   function unmount() {
     visual?.destroy(); source?.destroy(); visual = source = null;
+    previewGeneration++;
+    for (const url of previewUrls) URL.revokeObjectURL(url);
+    previewUrls.clear();
     for (const entry of mounted.values()) entry.destroy();
     mounted.clear(); drafts.clear(); sourcePending = false; splitPanel = null;
     $('source-surface').inert = false;
@@ -164,6 +168,39 @@
       const symbols={alpha:'α',beta:'β',gamma:'γ',delta:'δ',theta:'θ',lambda:'λ',mu:'μ',pi:'π',sigma:'σ',omega:'ω',sum:'∑',int:'∫',times:'×',cdot:'·',pm:'±',leq:'≤',geq:'≥',neq:'≠',infty:'∞'};
       const render=()=>{preview.textContent='Linear preview: '+inputs[0].value.trim().replace(/\\([A-Za-z]+)/g,(m,k)=>symbols[k]??m);};
       inputs[0].addEventListener('input',render); render(); panel.append(preview);
+    }
+    if (model.type==='figure') {
+      const figure=document.createElement('figure'); figure.className='local-figure';
+      const caption=document.createElement('figcaption');
+      const image=document.createElement('img'); image.hidden=true;
+      image.alt=model.fields[1].value || 'Imported figure';
+      const status=document.createElement('p'); status.className='cell-status';
+      const preview=document.createElement('button'); preview.type='button'; preview.textContent='Preview local image';
+      caption.textContent=model.fields[1].value;
+      figure.append(image,caption,status,preview); panel.append(figure);
+      preview.onclick=async()=>{
+        const candidates=PaperColabArchive.rasterCandidates(session.data.files,manuscriptRoot,path,inputs[0].value);
+        image.hidden=true;
+        if(candidates.length!==1) {
+          status.textContent=candidates.length?'Multiple matching local assets; use an explicit path and extension.':'No supported local raster asset found; TeX search paths may differ.';
+          return;
+        }
+        const generation=previewGeneration, requestedPath=inputs[0].value, blob=session.blob;
+        preview.disabled=true; status.textContent='Reading local image…';
+        try {
+          const data=await PaperColabArchive.readRaster(blob,candidates[0]);
+          if(generation!==previewGeneration || requestedPath!==inputs[0].value) return;
+          const previous=image.getAttribute('src');
+          if(previous && previewUrls.has(previous)){URL.revokeObjectURL(previous);previewUrls.delete(previous);}
+          const url=URL.createObjectURL(data); previewUrls.add(url);
+          image.onload=()=>{image.hidden=false;status.textContent='Local preview: '+candidates[0];};
+          image.onerror=()=>{image.hidden=true;status.textContent='The browser could not decode this image.';};
+          image.src=url;
+        } catch(error){if(generation===previewGeneration) status.textContent=error.message;}
+        finally{if(generation===previewGeneration) preview.disabled=false;}
+      };
+      inputs[0].addEventListener('input',()=>{image.hidden=true;image.removeAttribute('src');status.textContent='Preview the revised asset path.';});
+      inputs[1].addEventListener('input',()=>{caption.textContent=inputs[1].value;image.alt=inputs[1].value||'Imported figure';});
     }
     const actions=document.createElement('div'); actions.className='cell-operations';
     const apply=document.createElement('button'), discard=document.createElement('button');
@@ -443,7 +480,7 @@
 
   function open(archiveSession, selection, close, save) {
     if (session !== archiveSession) { files = new Map(); saved = new Map(); path = null; mode = 'document'; structuralHistory = new Map(); }
-    session = archiveSession; onClose = close; downloadFile = save;
+    session = archiveSession; onClose = close; downloadFile = save; manuscriptRoot = selection.root;
     const paths = [selection.root, ...selection.sources.filter(name => name !== selection.root)]
       .filter(name => /\.(?:tex|ltx)$/i.test(name) && session.data.files.get(name)?.text !== undefined);
     const others = [...session.data.files].filter(([name, data]) =>
