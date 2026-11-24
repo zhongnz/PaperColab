@@ -194,6 +194,8 @@
     for (const block of blocks) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'secondary';
+      button.dataset.stableId=block.stableId;
+      button.dataset.kind=block.kind;
       button.textContent = (block.kind === 'heading' ? 'Heading' : block.rich ? 'Paragraph' : 'Preserved') + ' · ' + block.quote.replace(/\s+/g, ' ').slice(0, 80);
       button.onclick = () => {
         if(busy) return;

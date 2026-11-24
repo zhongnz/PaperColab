@@ -43,7 +43,12 @@ def exercise(browser, port, width):
     page.locator("#actor").select_option("demo-bao")
     expect(page.locator("#who")).to_contain_text("Bao")
     page.get_by_role("button", name=re.compile("Estuary field notes")).click()
-    page.get_by_role("button", name=re.compile("two readings")).click()
+    # The display excerpt is truncated and changes after repeated edits.
+    # Identify the first paragraph by its semantic kind and persistent ID.
+    outline = page.locator('#blocks button[data-kind="paragraph"]').first
+    expect(outline).to_be_visible()
+    stable_id = outline.get_attribute("data-stable-id")
+    outline.click()
     prose = page.get_by_role("textbox", name="Visual block text")
     expect(prose).to_be_visible()
     if width == 1440:
@@ -77,7 +82,7 @@ def exercise(browser, port, width):
         second = browser.new_page()
         second.goto(f"http://127.0.0.1:{port}/")
         second.get_by_role("button", name=re.compile("Estuary field notes")).click()
-        second.get_by_role("button", name=re.compile("two readings")).click()
+        second.locator(f'#blocks button[data-stable-id="{stable_id}"]').click()
         expect(second.get_by_role("textbox", name="Visual block text")).to_contain_text("Checked")
         prose.click()
         prose.press("Control+Home")
@@ -104,7 +109,7 @@ def exercise(browser, port, width):
         page.get_by_role("button", name="Cells", exact=True).click()
         cells=page.locator("#hosted-cells")
         heading=cells.locator(".cell-heading").first
-        paragraph=cells.locator(".cell-paragraph").first
+        paragraph=cells.locator(f'[data-stable-id="{stable_id}"]')
         expect(heading.locator(".visual-prose")).to_contain_text("Sampling method")
         heading.locator(".visual-prose").click()
         heading.locator(".visual-prose").press("Control+Home")
@@ -124,7 +129,7 @@ def exercise(browser, port, width):
         table=cells.locator(".scientific-panel").filter(has=page.locator("table")).first
         expect(table.get_by_role("textbox",name="Row 2, column 2",exact=True)).to_have_value("4")
         table.get_by_role("textbox",name="Row 2, column 2",exact=True).fill("8")
-        table.locator("..").locator("..").get_by_role("button",name="Save cell",exact=True).click()
+        cells.locator(".manuscript-cell").filter(has=table).get_by_role("button",name="Save cell",exact=True).click()
         expect(table.get_by_role("textbox",name="Row 2, column 2",exact=True)).to_have_value("8")
         page.get_by_role("button", name="Focused", exact=True).click()
     page.close()
