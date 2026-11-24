@@ -2,6 +2,10 @@
 
 PaperColab is an open-source AI-native collaborative research workspace. This branch is a local v0.1 development preview, not a public beta. See [private-alpha readiness](docs/alpha-readiness.md). The workspace is a self-hosted project service: people suggest visual or source edits, a reviewer accepts them, and a lead approves a release that stays fixed. The offline editor still opens a LaTeX ZIP on one machine and exports the original bytes around each edited span.
 
+## Controlled local researcher pilot
+
+See [local pilot protocol](docs/local-pilot.md) for prerequisites, disposable workspaces, baseline and export verification, author/reviewer tasks and evidence templates. This is not public hosting or a completed pilot. Keep active manuscripts in the original system until fidelity, production identity and deployment gates pass.
+
 ## Run the workspace
 
 ```sh
