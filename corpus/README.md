@@ -84,3 +84,5 @@ Only the reports are retained in CI. Review source-specific licensing before
 redistributing any manuscript or compiled PDF. This benchmark exercises the
 shared browser parser/export model, not twenty real browser sessions or hosted
 collaboration tests. The existing browser tests separately exercise real UI.
+
+Coverage percentage applies only to classified paragraph ranges in inspected files; full-file parser fallbacks and unreadable sources can remain uncounted. The aggregate report makes this limitation explicit. The new multi-file fixture tests the same target and round-trip commands, including rejection of unreachable files.

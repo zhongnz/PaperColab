@@ -2,6 +2,9 @@ import csv
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import shutil
+import zipfile
 import unittest
 from corpus.benchmark import MANIFEST, root_for, marker_present, valid_source
 from corpus.summarize import summarize
@@ -34,7 +37,38 @@ class CorpusBenchmarkTests(unittest.TestCase):
         for row in rows[:18]:
             row.update(status="pass",baseline="pass",roundtrip="pass",edited_build="pass",
                        coverage={"editableParagraphs":1,"fallbackParagraphs":3},
-                       edited_pdf_sha256="fixture",zip_sha256="fixture")
+                       root="main.tex",edit_target="main.tex",pdf_marker_verified=True,compiler_image_verified=True,
+                       baseline_pdf_sha256="a"*64,edited_zip_sha256="b"*64,
+                       edited_pdf_sha256="c"*64,zip_sha256="d"*64)
         summary=summarize(rows,papers)
         self.assertTrue(summary["gate_met"])
         self.assertEqual(summary["paragraph_coverage"],0.25)
+
+    @unittest.skipUnless(shutil.which("node"),"Node required for shared editor benchmark")
+    def test_multifile_roundtrip(self):
+        repo=MANIFEST.parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            base=Path(tmp)
+            source,edited=base/"source.zip",base/"edited.zip"
+            root=b"\\documentclass{article}\n\\begin{document}\n\\input{sections/methods}\n\\end{document}\n"
+            methods=b"Original observation.\\n\\nAnother paragraph.\\n".replace(b"\\n",b"\n")
+            with zipfile.ZipFile(source,"w") as z:
+                z.writestr("main.tex",root)
+                z.writestr("sections/methods.tex",methods)
+                z.writestr("unrelated.tex",b"Do not edit.")
+                z.writestr("figure.bin",b"\x00\xff\x01")
+            def call(*args):
+                proc=subprocess.run(["node",*map(str,args)],cwd=repo,capture_output=True,text=True,timeout=30)
+                self.assertEqual(proc.returncode,0,proc.stderr)
+                return proc.stdout
+            target=json.loads(call("corpus/target.cjs",source,"main.tex"))["target"]
+            self.assertEqual(target,"sections/methods.tex")
+            call("corpus/roundtrip.cjs",source,"main.tex",edited,target)
+            with zipfile.ZipFile(edited) as z:
+                self.assertEqual(z.read("main.tex"),root)
+                self.assertEqual(z.read("sections/methods.tex"),methods.replace(b"Original observation.",b"Original observation. PaperColab round-trip check."))
+                self.assertEqual(z.read("unrelated.tex"),b"Do not edit.")
+                self.assertEqual(z.read("figure.bin"),b"\x00\xff\x01")
+            bad=subprocess.run(["node","corpus/roundtrip.cjs",str(source),"main.tex",str(base/"bad.zip"),"unrelated.tex"],
+                               cwd=repo,capture_output=True,text=True,timeout=30)
+            self.assertNotEqual(bad.returncode,0)

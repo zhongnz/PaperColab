@@ -9,6 +9,8 @@ import re
 import subprocess
 import sys
 import time
+import tarfile
+import zipfile
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
@@ -56,10 +58,13 @@ def fetch_source(url, target):
     opener = build_opener(ArxivRedirect())
     request = Request(url, headers={"User-Agent": "PaperColab/0.1 manuscript compatibility benchmark",
                                     "Accept": "application/gzip, application/x-tar, application/octet-stream, */*"})
+    deadline = time.monotonic() + 90
     try:
         with opener.open(request, timeout=30) as source, target.open("xb") as dest:
             total = 0
             while True:
+                if time.monotonic() > deadline:
+                    raise ValueError("Source download exceeded time limit.")
                 chunk = source.read(65536)
                 if not chunk:
                     break
@@ -161,9 +166,9 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
         if compiler_image()!=image:
             result["status"]="compiler-image-changed"
             return result
-        result["status"]="pass"
+        result.update(status="pass",pdf_marker_verified=True,compiler_image_verified=True)
         return result
-    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError,EOFError) as error:
+    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError,EOFError,tarfile.TarError,zipfile.BadZipFile) as error:
         # Report stage and exception class, not manuscript text or build logs.
         result.update(status=stage+"-failed",error_type=type(error).__name__)
         if stage=="baseline-build":result["baseline"]="fail"

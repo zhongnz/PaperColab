@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+import re
 from pathlib import Path
 
 MANIFEST=Path(__file__).with_name("papers.csv")
@@ -16,7 +17,11 @@ def summarize(rows, papers):
         if row["source"]!=paper["pinned_source_url"] or row["title"]!=paper["short_title"]:
             raise ValueError("Report does not match pinned corpus.")
         if row["status"]=="pass" and (any(row.get(k)!="pass" for k in ("baseline","roundtrip","edited_build"))
-               or not row.get("coverage") or not row.get("edited_pdf_sha256") or not row.get("zip_sha256")):
+               or row.get("pdf_marker_verified") is not True or row.get("compiler_image_verified") is not True
+               or not row.get("coverage") or row["coverage"].get("editableParagraphs",0)<1
+               or not row.get("root") or not row.get("edit_target")
+               or any(not re.fullmatch(r"[a-f0-9]{64}",str(row.get(k,""))) for k in
+                      ("zip_sha256","baseline_pdf_sha256","edited_zip_sha256","edited_pdf_sha256"))):
             raise ValueError("Incomplete claimed pass.")
     counts={}
     for row in rows:
@@ -27,7 +32,9 @@ def summarize(rows, papers):
     return {"papers":20,"passed":counts.get("pass",0),"gate_met":counts.get("pass",0)>=18,
             "status_counts":counts,"coverage_papers":len(inspected),
             "editable_paragraphs":editable,"fallback_paragraphs":fallback,
-            "paragraph_coverage":editable/(editable+fallback) if editable+fallback else None}
+            "paragraph_coverage":editable/(editable+fallback) if editable+fallback else None,
+            "coverage_note":"Among classified paragraph ranges in inspected sources only; full-file fallbacks and unreadable sources may be uncounted.",
+            "uninspected_sources":sum(len(c.get("uninspectedSources",[])) for c in inspected)}
 
 
 def main():
