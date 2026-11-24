@@ -54,3 +54,38 @@ not immutable dependency pins for CI itself. Server contract tests use
 synthetic receipts; the runner CI uses real containers.
 
 The hosted browser test uses a clearly labelled synthetic receipt to verify bundle download, receipt import and reviewed evidence registration without starting containers in the web service.
+
+
+## Structured outputs and manuscript provenance
+
+In addition to ordinary logs, Python/R scripts can emit one JSON object per
+line prefixed with PAPERCOLAB_OUTPUT_V1 followed by a space. For example:
+
+```python
+import json
+print("PAPERCOLAB_OUTPUT_V1 " + json.dumps({
+    "name": "results", "kind": "table", "title": "Model results",
+    "columns": ["model", "score"], "rows": [["Baseline", 0.81]]
+}))
+print("PAPERCOLAB_OUTPUT_V1 " + json.dumps({
+    "name": "trend", "kind": "series", "title": "Learning curve",
+    "x_label": "Epoch", "y_label": "Loss", "points": [[1, 0.9], [2, 0.6]]
+}))
+```
+
+The v2 receipt includes validated outputs derived from the recorded log; v1
+receipts remain supported. Output names are unique, at most eight outputs,
+64 KiB total JSON, 200 table rows or chart points, twelve columns and bounded
+finite values. Invalid marked output fails the run. No arbitrary file collection,
+HTML, imported SVG, image decoding or writable host output directory.
+The hosted interface renders text tables and numeric line charts using DOM
+nodes, and downloads output JSON. After receipt approval a human author may
+link a particular output to any existing manuscript cell at its current version.
+Links preserve output hash, original cell quote, version, creator and time.
+Changed or removed cells report changed/missing, without automatic relinking.
+The manuscript outline and Cells view identify attached outputs. Release
+manifests include these provenance records, but LaTeX source and manuscript
+ZIP contents are not automatically modified. Historical links are retained.
+The accepted run object continues to store the receipt; review and hashes
+do not independently attest execution or scientific validity. No direct
+Jupyter/Quarto adapter yet: this is a portable contract for future adapters.

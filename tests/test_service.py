@@ -471,6 +471,45 @@ class ProductTests(unittest.TestCase):
         path=s.path;s.close();self.service=Service(path)
         self.assertEqual(self.service.project(a["ada"],p)["experiments"][0]["status"],"accepted")
 
+    def test_structured_outputs_review_and_cell_provenance(self):
+        import hashlib
+        from compute.contract import digest, OUTPUT_PREFIX
+        s,p,a=self.service,self.project,self.actors
+        code=s.add_object(a["ada"],p,"code","Output code","print(1)")
+        run=s.create_experiment(a["ada"],p,{"title":"Structured run","objective":"Test output links",
+            "language":"python","image":"sha256:"+"a"*64,"code_id":code["id"],"dataset_ids":[]})
+        bundle=s.experiment_bundle(a["ada"],p,run["id"])
+        output={"name":"results","kind":"table","title":"Results","columns":["n"],"rows":[[1]]}
+        log=OUTPUT_PREFIX+json.dumps(output)+"\n"
+        receipt={"format":"papercolab-receipt-v2","experiment_id":run["id"],"bundle_sha256":bundle["sha256"],
+            "image":bundle["spec"]["image"],"runner":"docker-local-v1","status":"succeeded","exit_code":0,
+            "elapsed_ms":10,"log":log,"log_sha256":hashlib.sha256(log.encode()).hexdigest(),"outputs":[output]}
+        block=paragraph(s,a["bao"],p)
+        def link(actor="bao",version=block["version"]):
+            return s.link_experiment_output(a[actor],p,run["id"],"results",block["stableId"],version)
+        with self.assertRaises(ServiceError):
+            link()
+        with self.assertRaises(ServiceError):
+            s.submit_experiment(a["bao"],p,run["id"],{**receipt,"outputs":[{**output,"rows":[[2]]}]})
+        s.submit_experiment(a["bao"],p,run["id"],receipt)
+        with self.assertRaises(ServiceError):
+            link()
+        s.review_experiment(a["iris"],p,run["id"],"accepted","Fixture reviewed.")
+        with self.assertRaises(ServiceError):
+            link("quill")
+        result=link()
+        self.assertEqual(result["output_sha256"],digest(output))
+        self.assertEqual(result["status"],"exact")
+        with self.assertRaises(ServiceError):
+            link()
+        s.direct_edit(a["bao"],p,block["stableId"],block["version"],block["quote"],
+                      block["quote"].replace("two readings","three readings"),"source")
+        self.assertEqual(s.project(a["ada"],p)["experiment_output_links"][0]["status"],"changed")
+        with self.assertRaises(ServiceError):
+            link()
+        self.assertEqual(link(version=block["version"]+1)["status"],"exact")
+        self.assertEqual(s.project(a["quill"],p)["experiment_output_links"],[])
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")

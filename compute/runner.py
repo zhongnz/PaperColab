@@ -11,7 +11,7 @@ from threading import Thread, Event
 import time
 import uuid
 
-from compute.contract import validate_bundle, validate_receipt, MAX_LOG
+from compute.contract import validate_bundle, validate_receipt, extract_outputs, MAX_LOG
 
 
 def command(name, directory, spec):
@@ -95,10 +95,16 @@ def execute(bundle, timeout=60):
         text=bytes(log).decode("utf-8","replace")
         text="".join(c for c in text if c in "\n\t" or c.isprintable())
         text=text.encode("utf-8")[:MAX_LOG].decode("utf-8","ignore")
-        receipt={"format":"papercolab-receipt-v1","experiment_id":spec["id"],
+        outputs=[]
+        if status=="succeeded":
+            try:
+                outputs=extract_outputs(text)
+            except (ValueError,TypeError):
+                status,code="failed",125
+        receipt={"format":"papercolab-receipt-v2","experiment_id":spec["id"],
                  "bundle_sha256":bundle["sha256"],"image":spec["image"],"runner":"docker-local-v1",
                  "status":status,"exit_code":code,"elapsed_ms":int((time.monotonic()-start)*1000),
-                 "log":text,"log_sha256":hashlib.sha256(text.encode("utf-8")).hexdigest()}
+                 "log":text,"log_sha256":hashlib.sha256(text.encode("utf-8")).hexdigest(),"outputs":outputs}
         return validate_receipt(receipt,bundle)
 
 

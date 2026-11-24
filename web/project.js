@@ -532,6 +532,33 @@
     }
   }
 
+  function outputPreview(output){
+    const section=document.createElement('section');section.className='structured-output';
+    const title=document.createElement('h4');title.textContent=output.title;section.append(title);
+    if(output.kind==='table'){
+      const table=document.createElement('table');table.style.borderCollapse='collapse';
+      const head=table.createTHead().insertRow();
+      for(const col of output.columns){const th=document.createElement('th');th.textContent=col;head.append(th);}
+      const body=table.createTBody();
+      for(const row of output.rows){const tr=body.insertRow();for(const cell of row)tr.insertCell().textContent=cell===null?'':String(cell);}
+      const wrap=document.createElement('div');wrap.style.overflow='auto';wrap.style.maxHeight='260px';wrap.append(table);section.append(wrap);
+    }else{
+      // Construct SVG from numeric coordinates only. No imported markup.
+      const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
+      svg.setAttribute('viewBox','0 0 360 230');svg.setAttribute('width','100%');svg.setAttribute('role','img');
+      svg.setAttribute('aria-label',output.title+'; '+output.x_label+' versus '+output.y_label);
+      const x=output.points.map(p=>p[0]),y=output.points.map(p=>p[1]),xmin=Math.min(...x),xmax=Math.max(...x),ymin=Math.min(...y),ymax=Math.max(...y);
+      const scale=(v,min,max)=>max===min?0.5:(v-min)/(max-min);
+      const coords=output.points.map(([a,b])=>[55+280*scale(a,xmin,xmax),185-155*scale(b,ymin,ymax)]);
+      const line=document.createElementNS(ns,'path');line.setAttribute('d','M55 30 V185 H335');line.setAttribute('stroke','currentColor');line.setAttribute('fill','none');svg.append(line);
+      const series=document.createElementNS(ns,'polyline');series.setAttribute('points',coords.map(p=>p.join(',')).join(' '));series.setAttribute('fill','none');series.setAttribute('stroke','#326a99');series.setAttribute('stroke-width','2');svg.append(series);
+      for(const [a,b] of coords){const dot=document.createElementNS(ns,'circle');dot.setAttribute('cx',a);dot.setAttribute('cy',b);dot.setAttribute('r','2.5');dot.setAttribute('fill','#326a99');svg.append(dot);}
+      const text=(a,b,value,anchor='start')=>{const node=document.createElementNS(ns,'text');node.setAttribute('x',a);node.setAttribute('y',b);node.setAttribute('font-size','11');node.setAttribute('text-anchor',anchor);node.textContent=value;svg.append(node);};
+      text(52,25,String(ymax),'end');text(52,185,String(ymin),'end');text(55,200,String(xmin));text(335,200,String(xmax),'end');text(195,219,output.x_label.slice(0,40),'middle');
+      const label=document.createElement('p');label.textContent=output.y_label+' vs '+output.x_label;section.append(svg,label);
+    }
+    return section;
+  }
   function renderExperiments(){
     const host=$('experiment-list');
     $('experiment-panel').hidden=me.kind!=='human';
@@ -571,6 +598,29 @@
       }
       if(experiment.log!==null){
         const pre=document.createElement('pre');pre.textContent=experiment.log;pre.style.whiteSpace='pre-wrap';pre.style.maxHeight='240px';pre.style.overflow='auto';row.append(pre);
+      }
+      for(const output of experiment.outputs??[]){
+        const panel=outputPreview(output);
+        panel.dataset.outputName=output.name;
+        const button=document.createElement('button');button.type='button';button.textContent='Download output JSON';
+        button.onclick=()=>download(JSON.stringify(output,null,2),output.name+'.json','application/json');
+        panel.append(button);
+        if(experiment.status==='accepted'&&directAllowed()){
+          const select=document.createElement('select');select.setAttribute('aria-label','Manuscript cell for '+output.name);select.style.maxWidth='100%';
+          for(const b of detail.blocks)select.append(new Option(b.path+' · '+b.kind+' · '+b.quote.replace(/\s+/g,' ').slice(0,60),b.stableId));
+          const link=document.createElement('button');link.type='button';link.textContent='Link output to cell';link.disabled=!select.options.length;
+          link.onclick=()=>act(async()=>{
+            const b=detail.blocks.find(x=>x.stableId===select.value);
+            if(!b)throw Error('Choose a manuscript cell.');
+            await api('POST',endpoint+'/output-links',{output_name:output.name,block_id:b.stableId,version:b.version});
+            await openProject(detail.id);say('Reviewed output linked to manuscript cell version.');
+          });
+          panel.append(select,link);
+        }
+        for(const link of (detail.experiment_output_links??[]).filter(x=>x.experiment_id===experiment.id&&x.output_name===output.name)){
+          const info=document.createElement('p');info.textContent='Linked cell '+link.block_id.slice(0,8)+' · v'+link.cell_version+' · '+link.status;panel.append(info);
+        }
+        row.append(panel);
       }
       if(experiment.status==='review'&&canDecide()){
         const assessment=document.createElement('textarea');assessment.rows=3;assessment.maxLength=4000;
@@ -669,6 +719,8 @@
         if(isMulti()) {selected=block;presenceChanged();cellViews.get(block.stableId)?.element.scrollIntoView({block:'nearest'});}
         else if(!dirty || window.confirm($('durable-drafts').checked?'Leave active draft in local recovery and switch cell?':'Discard your local cell draft?')) selectBlock(block);
       };
+      const outputLinks=(detail.experiment_output_links??[]).filter(x=>x.block_id===block.stableId);
+      if(outputLinks.length)button.textContent+=' · '+outputLinks.length+' computational link'+(outputLinks.length===1?'':'s');
       host.append(button);
     }
     const current = blocks.find(block => block.stableId === selected?.stableId) || blocks.find(block => block.rich && block.kind === 'paragraph') || blocks[0];
@@ -691,7 +743,11 @@
     status.className='cell-status';status.setAttribute('role','status');
     const model=base.kind==='raw'?B.scientific(base.quote):null;
     label.textContent=(model?.type??base.kind)+' · version '+base.version+(base.owner_id?' · owned':'');
-    header.append(label);element.append(header);
+    header.append(label);
+    for(const link of (detail.experiment_output_links??[]).filter(x=>x.block_id===base.stableId)){
+      const evidence=document.createElement('span');evidence.textContent=' · '+link.output_name+' ('+link.status+')';header.append(evidence);
+    }
+    element.append(header);
     const content=document.createElement('div');content.className='cell-content';element.append(content);
     const controls=document.createElement('div');controls.className='cell-operations';element.append(controls,status);
     const allowed=['author','lead'].includes(role());

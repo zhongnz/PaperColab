@@ -14,7 +14,18 @@ def run(language,image):
           "datasets":[{"id":"dataset","revision":1,"body":"1,2,3"}]}
     receipt=execute({"spec":spec,"sha256":digest(spec)})
     assert receipt["status"]=="succeeded" and receipt["log"].strip()=="6",receipt
+    table={"name":"results","kind":"table","title":"Results","columns":["n","sum"],"rows":[[3,6]]}
+    series={"name":"trend","kind":"series","title":"Trend","x_label":"n","y_label":"sum","points":[[1,1],[2,3],[3,6]]}
+    import json
+    lines=["PAPERCOLAB_OUTPUT_V1 "+json.dumps(x,separators=(",",":")) for x in (table,series)]
+    spec["code"]["body"]=("\n".join("print("+repr(line)+")" for line in lines) if language=="python"
+                           else "\n".join("cat("+json.dumps(line)+", '\\n', sep='')" for line in lines))
+    receipt=execute({"spec":spec,"sha256":digest(spec)})
+    assert receipt["status"]=="succeeded" and receipt["outputs"]==[table,series],receipt
     if language=="python":
+        spec["code"]["body"]="print('PAPERCOLAB_OUTPUT_V1 invalid')"
+        receipt=execute({"spec":spec,"sha256":digest(spec)})
+        assert receipt["status"]=="failed" and receipt["outputs"]==[],receipt
         spec["code"]["body"]="print('x'*300000)"
         receipt=execute({"spec":spec,"sha256":digest(spec)})
         assert receipt["status"]=="output-limit",receipt["status"]

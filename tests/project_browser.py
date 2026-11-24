@@ -281,11 +281,12 @@ def exercise(browser, port, width):
             bundle=json.loads(path.read_text())
             assert bundle["spec"]["code"]["body"]=="print(42)"
             assert bundle["spec"]["datasets"][0]["body"]=="1,2,3"
-            log="42\n"
-            receipt={"format":"papercolab-receipt-v1","experiment_id":bundle["spec"]["id"],
+            output={"name":"results","kind":"table","title":"Fixture results","columns":["value"],"rows":[[42]]}
+            log="42\nPAPERCOLAB_OUTPUT_V1 "+json.dumps(output)+"\n"
+            receipt={"format":"papercolab-receipt-v2","experiment_id":bundle["spec"]["id"],
                      "bundle_sha256":bundle["sha256"],"image":image,"runner":"docker-local-v1",
                      "status":"succeeded","exit_code":0,"elapsed_ms":10,
-                     "log":log,"log_sha256":hashlib.sha256(log.encode()).hexdigest()}
+                     "log":log,"log_sha256":hashlib.sha256(log.encode()).hexdigest(),"outputs":[output]}
             path=Path(directory)/"receipt.json"
             path.write_text(json.dumps(receipt))
             run.get_by_label("Runner receipt for Fixture experiment").set_input_files(path)
@@ -295,6 +296,12 @@ def exercise(browser, port, width):
             run.get_by_role("button",name="Accept as run evidence").click()
             expect(run).to_contain_text("accepted")
             expect(page.locator("#library")).to_contain_text("run · Fixture experiment")
+            panel=run.locator('[data-output-name="results"]')
+            expect(panel.locator("table")).to_contain_text("42")
+            panel.get_by_label("Manuscript cell for results").select_option(stable_id)
+            panel.get_by_role("button",name="Link output to cell").click()
+            expect(panel).to_contain_text("· exact")
+            expect(page.locator(f'#blocks button[data-stable-id="{stable_id}"]')).to_contain_text("1 computational link")
     page.close()
     assert not errors, errors
 

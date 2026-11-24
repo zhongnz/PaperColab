@@ -112,6 +112,12 @@ class Service:
           created_at INTEGER NOT NULL, receipt TEXT, submitted_by TEXT,
           review TEXT, assessment TEXT, reviewed_by TEXT, reviewed_at INTEGER,
           evidence_id TEXT UNIQUE);
+        CREATE TABLE IF NOT EXISTS experiment_output_links (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, experiment_id TEXT NOT NULL,
+          output_name TEXT NOT NULL, output_sha256 TEXT NOT NULL, block_id TEXT NOT NULL,
+          cell_version INTEGER NOT NULL, cell_quote TEXT NOT NULL, actor_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE(project_id,experiment_id,output_name,block_id,cell_version));
         CREATE TABLE IF NOT EXISTS anchors (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL, block_id TEXT NOT NULL, quote TEXT NOT NULL,
           actor_id TEXT NOT NULL, created_revision INTEGER NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0);
@@ -341,6 +347,7 @@ class Service:
             "agent_tasks": self._agent_tasks(project_id) if actor["kind"] == "human" else [],
             "workflows": self._workflows(project_id) if actor["kind"] == "human" else [],
             "experiments": self._experiments(project_id) if actor["kind"] == "human" else [],
+            "experiment_output_links": self._output_links(project_id) if actor["kind"] == "human" else [],
             "readiness": {"pending_suggestions": len(pending), "unresolved_anchors": len(unresolved),
                           "open_decisions": len(open_decisions),
                           "ready": not pending and not unresolved and not open_decisions},
@@ -596,6 +603,7 @@ class Service:
                 "status": row["review"] or ("review" if receipt else "planned"),
                 "execution_status": receipt["status"] if receipt else None,
                 "log": receipt["log"] if receipt else None, "assessment": row["assessment"],
+                "outputs": receipt.get("outputs",[]) if receipt else [],
                 "submitted_by": row["submitted_by"], "reviewed_by": row["reviewed_by"], "evidence_id": row["evidence_id"]}
 
     def _experiments(self, project_id):
@@ -682,6 +690,41 @@ class Service:
             self._audit(actor["id"], "review-experiment", project_id,
                         {"experiment":experiment_id,"outcome":outcome,"evidence":evidence})
         return self._experiment_view(self._experiment_row(project_id, experiment_id))
+
+    def _output_links(self, project_id):
+        result=[]
+        for row in self._rows("SELECT * FROM experiment_output_links WHERE project_id=? ORDER BY created_at,rowid", (project_id,)):
+            block=self.db.execute("SELECT version,quote FROM blocks WHERE project_id=? AND stable_id=?",
+                                  (project_id,row["block_id"])).fetchone()
+            status="missing" if not block else ("exact" if block["version"]==row["cell_version"] and block["quote"]==row["cell_quote"] else "changed")
+            result.append({**dict(row),"status":status})
+        return result
+
+    def link_experiment_output(self, actor, project_id, experiment_id, output_name, block_id, version):
+        from compute.contract import digest
+        self.require(actor, project_id, "direct")
+        if not isinstance(output_name,str) or not isinstance(block_id,str) or type(version) is not int:
+            raise ServiceError(400, "Choose an output and a current manuscript cell.")
+        row=self._experiment_row(project_id,experiment_id)
+        if row["review"]!="accepted" or not row["evidence_id"]:
+            raise ServiceError(409, "Only reviewed experiment outputs can be linked.")
+        output=next((x for x in json.loads(row["receipt"]).get("outputs",[]) if x["name"]==output_name),None)
+        if output is None:
+            raise ServiceError(404, "Unknown structured output.")
+        block=self._block_row(project_id,block_id)
+        if block["version"]!=version:
+            raise ServiceError(409, "Cell changed remotely. Refresh before linking the output.")
+        if self.db.execute("""SELECT 1 FROM experiment_output_links WHERE project_id=? AND experiment_id=?
+                              AND output_name=? AND block_id=? AND cell_version=?""",
+                           (project_id,experiment_id,output_name,block_id,version)).fetchone():
+            raise ServiceError(409, "This output is already linked to this cell version.")
+        key=str(uuid.uuid4())
+        with self.db:
+            self.db.execute("INSERT INTO experiment_output_links VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (key,project_id,experiment_id,output_name,digest(output),block_id,version,block["quote"],actor["id"],self.now()))
+            self._audit(actor["id"],"link-experiment-output",project_id,
+                        {"link":key,"experiment":experiment_id,"output":output_name,"block":block_id,"version":version})
+        return next(x for x in self._output_links(project_id) if x["id"]==key)
 
     def _workflow_row(self, project_id, workflow_id):
         row = self.db.execute("SELECT * FROM research_workflows WHERE project_id=? AND id=?",
@@ -1347,7 +1390,8 @@ class Service:
         files = self._export_map(project_id)
         manifest = {"revision": revision, "project_id": project_id, "title": detail["title"], "released_by": actor["id"],
                     "members": detail["members"], "decisions": detail["decisions"], "links": detail["links"],
-                    "suggestions": detail["suggestions"], "objects": detail["objects"], "block_ids": [block["stableId"] for block in detail["blocks"]]}
+                    "suggestions": detail["suggestions"], "objects": detail["objects"],
+                    "experiment_output_links": detail["experiment_output_links"], "block_ids": [block["stableId"] for block in detail["blocks"]]}
         self.db.execute("INSERT INTO releases (id, project_id, revision, actor_id, manifest, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                         (release_id, project_id, revision, actor["id"], json.dumps(manifest), self.now()))
         for path, data in files.items():
@@ -1480,7 +1524,7 @@ class Service:
         return {"removed": removed}
 
     def _delete_project(self, project_id):
-        for table in ("members", "blocks", "files", "suggestions", "anchors", "comments", "links", "decisions", "crdt_cells", "agent_tasks", "workflow_attempts", "workflow_steps", "research_workflows", "experiments"):
+        for table in ("members", "blocks", "files", "suggestions", "anchors", "comments", "links", "decisions", "crdt_cells", "agent_tasks", "workflow_attempts", "workflow_steps", "research_workflows", "experiments", "experiment_output_links"):
             self.db.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
         self.db.execute("DELETE FROM object_versions WHERE object_id IN (SELECT id FROM objects WHERE project_id = ?)", (project_id,))
         self.db.execute("DELETE FROM objects WHERE project_id = ?", (project_id,))

@@ -101,6 +101,8 @@ class Api:
                 return self.service.submit_experiment(actor, bits[2], bits[4], data)
             if bits[5] == "review" and method == "POST":
                 return self.service.review_experiment(actor, bits[2], bits[4], data.get("outcome"), data.get("assessment"))
+            if bits[5] == "output-links" and method == "POST":
+                return self.service.link_experiment_output(actor,bits[2],bits[4],data.get("output_name"),data.get("block_id"),data.get("version"))
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "workflows" and method == "POST":
             return self.service.create_workflow(actor, bits[2], data.get("title"), data.get("objective"))
         if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "workflows" and bits[5] == "steps" and method == "POST":
