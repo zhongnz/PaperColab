@@ -12,7 +12,7 @@ const coverageKeys = ['editableParagraphs', 'editableHeadings', 'fallbackParagra
 
 function blankCoverage() {
   return { editableParagraphs: 0, editableHeadings: 0, fallbackParagraphs: 0, fallbackHeadings: 0,
-    preservedBlocks: 0, editableBlocks: 0, fallbackCommands: [], uninspectedSources: [] };
+    preservedBlocks: 0, editableBlocks: 0, fallbackCommands: [], uninspectedSources: [], fullFileFallbacks: [] };
 }
 
 function addCoverage(total, part) {
@@ -27,11 +27,16 @@ function addCoverage(total, part) {
 
 function manuscriptCoverage(data, root, sources) {
   const total = blankCoverage();
+  const contexts=PaperColabBlocks.projectContexts([...data.files].filter(([name,file])=>/\.(tex|ltx|sty|cls)$/i.test(name)&&typeof file.text==='string').map(([name,file])=>[name,file.text]),data.roots);
   for (const source of sources) {
     if (!/\.(?:tex|ltx)$/i.test(source)) continue;
     const text = data.files.get(source)?.text;
     if (typeof text !== 'string') { total.uninspectedSources.push(source); continue; }
-    addCoverage(total, PaperColabBlocks.coverage(PaperColabBlocks.parseFile(text, { root: source === root })));
+    const parsedFile=PaperColabBlocks.parseFile(text, { root: source === root,macros:contexts[source]?new Map(contexts[source]):null });
+    const report = PaperColabBlocks.coverage(parsedFile);
+    addCoverage(total, report);
+    if (report.fullFileFallback) total.fullFileFallbacks.push({source, reason: report.fullFileReason});
+    if(parsedFile.macros.size) (total.literalMacroSignatures??=[]).push({source,signatures:[...parsedFile.macros].map(([name,arity])=>({name,arity}))});
   }
   return total;
 }
@@ -45,7 +50,22 @@ async function check(filename) {
     const counts = { found: 0, toolchain: 0, review: 0, missing: 0 };
     for (const ref of references) counts[ref.status]++;
     const coverage = manuscriptCoverage(data, root, sources);
-    return { root, sources, counts, notes, coverage };
+    const parsed=data.parsed.get(root);
+    // Candidate declaration names and arities only. This is diagnostic,
+    // not a macro expander or an authority to edit unknown invocations.
+    const macroCandidates=[];
+    for(const source of sources){
+      if(!/\.(tex|ltx|sty|cls)$/i.test(source))continue;
+      const text=data.files.get(source)?.text;
+      if(typeof text!=='string')continue;
+      for(const m of text.matchAll(/^[ \t]*\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand)\*?[ \t]*\{\\([A-Za-z]+)\}[ \t]*(?:\[([0-9])\])?[ \t]*\{/gm)){
+        if(macroCandidates.length>=200)break;
+        macroCandidates.push({source,name:m[1],arity:Number(m[2]??0)});
+      }
+      if(macroCandidates.length>=200)break;
+    }
+    return { root, sources, counts, notes, coverage, macroCandidates,
+      rootEvidence:{hasClass:parsed.hasClass,hasBody:parsed.hasBody,titles:parsed.titles} };
   });
   return { name: path.basename(filename), sha256: createHash('sha256').update(bytes).digest('hex'),
     files: data.files.size, roots, archiveFindings: data.notes, pdfBuild: 'not-run', roundTrip: 'not-run' };

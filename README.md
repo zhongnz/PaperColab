@@ -1,6 +1,10 @@
 # PaperColab
 
-PaperColab is an open-source project for writing and reviewing scientific manuscripts together. The workspace is a self-hosted project service: people suggest visual or source edits, a reviewer accepts them, and a lead approves a release that stays fixed. The offline editor still opens a LaTeX ZIP on one machine and exports the original bytes around each edited span.
+PaperColab is an open-source AI-native collaborative research workspace. This branch is a local v0.1 development preview, not a public beta. See [private-alpha readiness](docs/alpha-readiness.md). The workspace is a self-hosted project service: people suggest visual or source edits, a reviewer accepts them, and a lead approves a release that stays fixed. The offline editor still opens a LaTeX ZIP on one machine and exports the original bytes around each edited span.
+
+## Controlled local researcher pilot
+
+See [local pilot protocol](docs/local-pilot.md) for prerequisites, disposable workspaces, baseline and export verification, author/reviewer tasks and evidence templates. This is not public hosting or a completed pilot. Keep active manuscripts in the original system until fidelity, production identity and deployment gates pass.
 
 ## Run the workspace
 
@@ -10,7 +14,7 @@ PAPERCOLAB_DEMO=1 python3 -m server
 
 Open http://127.0.0.1:8787/. The demo signs in as Ada (lead and operator), Bao (author), Iris (reviewer) or Quill (assistant). Those tokens exist only for a local demo, and demo mode will not listen on a public address.
 
-A suggestion, whether it comes from the visual editor, the source editor, or `POST /api/mcp`, is the same review record. It names the person or assistant, the revision they saw, and the block. The manuscript changes only when a human reviewer or lead accepts it. Two overlapping edits of one block both stay pending; accepting one marks the other stale instead of merging the text. A split that stops being one block stays for review. Moving a block keeps its id, so a comment anchor still resolves. A release ZIP and its manifest stay byte-for-byte the same after later draft edits.
+A suggestion, whether it comes from the visual editor, the source editor, or `POST /api/mcp`, is the same review record. It names the person or assistant, the revision they saw, and the block. A proposed change affects the manuscript only when a human reviewer or lead accepts it. Human authors can also explicitly save version-checked cells and perform supported structural operations directly. Two overlapping edits of one block both stay pending; accepting one marks the other stale instead of merging the text. A split that stops being one block stays for review. Moving a block keeps its id, so a comment anchor still resolves. A release ZIP and its manifest stay byte-for-byte the same after later draft edits.
 
 The SQLite database is `data/papercolab.sqlite`. An operator can back it up, restore it, turn AI proposals off, set how long unreleased projects are kept, and read the audit log. Without demo mode, the first start prints an operator token. The offline checker remains at http://127.0.0.1:8787/index.html and does not call the service.
 
@@ -18,6 +22,10 @@ The SQLite database is `data/papercolab.sqlite`. An operator can back it up, res
 
 Open **web/index.html** and select **Open example editor**. For your own paper, choose a project ZIP, select a manuscript root and click **Edit manuscript**. The outline lists the files and blocks. Choose a paragraph or section heading to edit.
 
+- Document view opens a continuous file of editable paragraphs and headings. Switch to Cells to expose the same blocks individually, with formatting, source and revert controls. Each supported cell can open its own LaTeX draft, and a valid apply updates the visual text. Unapplied drafts block export and view or file changes.
+- In Cells view, insert a paragraph or heading after an editable cell, delete a cell, move it across an adjacent editable cell, split a paragraph at the caret, merge adjacent paragraphs, or convert a paragraph to a section heading and back. Operations reparse the file and verify all expected ranges before committing. Raw LaTeX is never moved or deleted; ambiguous boundaries are rejected. Stable local cell IDs follow retained content. Undo structure restores the preceding structural checkpoint when there are no subsequent block edits; individual Revert restores the last checkpoint's block, not necessarily the imported version. Structural history is local and in memory.
+- Scientific cell forms in Document and Cells views support simple display equations (LaTeX expression and a linear symbol preview, not typeset maths), rectangular plain-text tabular grids with common horizontal rules, simple figure asset-path/caption fields, and flat plain-text lists. Editing a field patches its source span; supported environments retain their raw classification for older readers. Their selected-block source and split views accept a validated full-cell LaTeX draft; applying a source edit updates the structured form, and applying fields updates source. Unsupported environments stay read-only. Scientific source edits must retain the same supported cell type. Unsupported macros, labelled equations, nested lists, complex tables and figures stay preserved. Insert equation, table and list templates from Cells view. Scientific changes use the same validated checkpoint and undo as structural edits. Figure forms can preview a matching PNG, JPEG, GIF or WebP from the imported ZIP (up to 5 MiB), using explicit paths relative to the selected manuscript root or current source folder. Ambiguous paths, PDF, SVG and remote URLs are not previewed. This is not a TeX graphics-path resolver or a substitute for compiling the manuscript. A paragraph's citation picker appends a selected key from local BibTeX files; it is not a full bibliography parser or citation manager.
+- Block source and Split operate on the selected outline block. These four views share the offline file's original-source edit map; they are not four independent documents. The full project remains exportable as LaTeX. Whole-file structural source editing and live co-authoring are not provided by this offline increment.
 - Type in the visual pane or use bold and italic. The LaTeX pane follows each visual change. Citations, references and inline maths appear as protected tokens.
 - To change a token or fine-tune source, edit the LaTeX pane and click **Apply source**. Invalid or multi-block source stays in the draft until corrected or discarded.
 - Tables, display equations, custom macros, preambles and complex blocks appear as read-only LaTeX. **Revert block** restores its exact input. Visual undo and redo operate within the current block.
@@ -89,3 +97,39 @@ The [pilot plan](docs/pilot.md) contains the interview guide, the two-minute fri
 PaperColab owns the mapping between manuscript blocks and original source ranges. To rebuild the editor libraries, use Node 24 and run `npm ci --ignore-scripts` followed by `npm run build:vendor`. CI checks that the resulting bundles and notices match the checked-in copies. Opening the app requires no npm install or remote services.
 
 PaperColab code and its fictional example use the [Apache License 2.0](LICENSE). The bundled editors and parser ship with [per-package third-party notices](web/vendor/editor-NOTICES.txt). The bundled zip.js 2.25.0 has its own [BSD licence](web/vendor/zip-LICENSE.txt). The single-file distribution includes the same notices.
+
+### Hosted collaboration increment
+
+The hosted workspace supports explicit direct cell saves for human authors and leads, alongside the existing reviewed suggestion mode. Each persistent block has a content version and retains its owner when reparsed. Direct saves require the expected cell version and quote, validate exact retained source ranges, record an audit entry and invalidate overlapping pending suggestions. Independent cell edits can succeed even after another project revision advances. An idle open manuscript checks the server revision every 2.5 seconds; a dirty draft stays local and can be saved only if its version still matches. Unrelated workspace actions that refresh the manuscript are blocked while a local draft is open; navigation requires explicit discard confirmation. This is optimistic server-authoritative collaboration by default. The optional experimental Yjs checkpoint and presence stream do not provide character-level co-editing. Direct scientific edits are source-only for supported adapters. The existing suggestion and movement paths have separate validation contracts; owner metadata is not access control. The service is still a local SQLite prototype, not production authentication or deployment infrastructure.
+
+The hosted manuscript now offers Focused, Document and Cells views. The latter two mount independently editable cells with shared Tiptap and scientific field controls (also used offline), local LaTeX drafts and per-cell save/propose/discard. A successful save preserves other cell drafts, including their original versions, and stale saves retain the conflicting draft. The file API returns source and its cell catalogue in a single snapshot. Hosted scientific forms use the human direct-save path. Hosted structural editing is available in Cells view; AI scientific proposals, hosted asset previews and full offline/hosted component parity remain incomplete. Browser-local draft recovery is opt-in. See [experimental collaboration and draft recovery](docs/crdt-transport.md).
+
+### Hosted structural editing
+
+In hosted Cells view, human authors and leads can insert supported paragraph,
+heading, equation, table and list templates, delete editable cells, move across
+adjacent editable cells, split paragraphs at the caret, merge adjacent
+paragraphs and convert headings/paragraphs. The server validates the exact
+project revision and cell version, reuses the offline source-boundary validator,
+assigns new UUIDs only to new cells and commits the source, catalogue and audit
+atomically. Unchanged cells retain their versions and owners. Split children
+inherit ownership; removed owned cells require explicit unassignment. Any
+anchor on changed or removed content blocks the operation, even dismissed
+anchors; unchanged moves preserve exact anchors. Removing a cell with pending
+proposals is blocked; proposals against changed retained cells become stale.
+Changed/deleted CRDT checkpoints are invalidated. Local drafts must be saved
+or closed first. No collaborative structural undo, arbitrary raw-cell moves,
+anchor migration, cross-file moves or automatic structural conflict merging.
+The older offset-based move endpoint remains for compatibility but is now
+human-only; it has a different validation contract and is not used by the new
+UI. Structural changes do not alter existing release snapshots.
+
+### AI task delegation
+
+The hosted workspace now has a lead-only delegation form and a restricted, expiring, single-cell proposal API. See [agent delegation](docs/agent-delegation.md) for the authority boundary, pinned research context, review contract and limitations. No model is invoked automatically.
+
+Optional model adapters and a standard local MCP stdio bridge are documented in [agent integrations](docs/agent-integrations.md). Draft generation and proposal submission are separate actions; remote context disclosure requires explicit opt-in.
+
+Persistent research workflow plans now coordinate individually delegated cells with dependencies, attempt history and explicit human evaluation. See [workflow coordination](docs/research-workflows.md). No automatic scheduling or model execution.
+
+Computational research now has a pinned experiment registry, explicitly invoked local Docker runner for Python/R, imported receipts and reviewed immutable run evidence. See [computational research](docs/computational-research.md). No code execution in the web server.

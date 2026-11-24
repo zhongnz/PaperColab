@@ -1,0 +1,71 @@
+name: Manuscript compatibility benchmark
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'corpus/**'
+      - 'web/blocks.js'
+      - 'web/archive.js'
+      - 'web/inspect.js'
+      - 'scripts/check_build.py'
+      - 'scripts/build_worker.py'
+      - 'scripts/build_diagnostics.py'
+      - '.github/workflows/corpus.yml'
+permissions:
+  contents: read
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Fetch pinned emcee source
+        if: matrix.shard == 0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dfm/emcee
+          ref: 3036b79448cc671d1a1a6c9104b6f0b7c4362850
+          path: build/emcee-source
+          persist-credentials: false
+          sparse-checkout: document
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils
+      - run: docker pull texlive/texlive:TL2025-historic
+      - name: Run five pinned manuscripts
+        run: python -m corpus.benchmark --shard ${{ matrix.shard }} --work build/corpus-local --report build/report-${{ matrix.shard }}.json --emcee build/emcee-source
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: corpus-report-${{ matrix.shard }}
+          path: build/report-${{ matrix.shard }}.json
+          retention-days: 14
+  fidelity:
+    needs: corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: corpus-report-*
+          path: build/reports
+          merge-multiple: true
+      - name: Summarise and enforce 18 of 20 fidelity gate
+        run: |
+          set -o pipefail
+          python -m corpus.summarize --require-gate build/reports/report-*.json | tee -a "$GITHUB_STEP_SUMMARY"

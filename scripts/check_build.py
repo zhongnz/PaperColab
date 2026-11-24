@@ -1,6 +1,7 @@
 """Build one root from an export ZIP with an isolated TeX Live container."""
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,7 +14,7 @@ WORKER = Path(__file__).with_name("build_worker.py")
 MIB = 1024 * 1024
 
 
-def command(name, root, engine):
+def command(name, root, engine, preview=False):
     return [
         "docker", "run", "--rm", "-i", "--name", name, "--pull=never", "--network=none",
         "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
@@ -21,13 +22,34 @@ def command(name, root, engine):
         "--tmpfs=/work:rw,noexec,nosuid,nodev,size=384m,mode=1777",
         "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777",
         "--workdir=/work", "--env=HOME=/tmp", "--env=PAPERCOLAB_CONTAINER=1",
-        "--entrypoint=python3", IMAGE, "-I", "-c", WORKER.read_text(encoding="utf-8"), root, engine
+        "--log-driver=none", "--entrypoint=python3", IMAGE, "-I", "-c", WORKER.read_text(encoding="utf-8"), root, engine,
+        *(["preview"] if preview else [])
     ]
 
 
 def clean_log(raw):
     text = raw.decode("utf-8", "replace")
     return "".join(c for c in text if c in "\n\t" or c.isprintable())
+
+
+def build_metadata(raw):
+    # Worker reports only bounded known fields. Never surface a random
+    # manuscript log line as structured execution metadata.
+    lines=raw.decode("utf-8","replace").splitlines()
+    # The worker emits exactly one record before its error message.
+    # A duplicate (including anything impersonated in a TeX log) is not
+    # evidence of the actual build profile.
+    records=[line for line in lines if line.startswith("PAPERCOLAB_BUILD_V1 ")]
+    if len(records)!=1:return None
+    for line in records:
+        try:
+            value=json.loads(line[len("PAPERCOLAB_BUILD_V1 "):])
+            if (isinstance(value,dict) and set(value)=={"bibliography","eps_converted"} and
+                value["bibliography"] in ("normal","supplied-bbl") and type(value["eps_converted"]) is int and
+                0<=value["eps_converted"]<=8):
+                return value
+        except (ValueError,TypeError):pass
+    return None
 
 
 def verify(archive, root, engine, output):
@@ -45,6 +67,8 @@ def verify(archive, root, engine, output):
         except (subprocess.TimeoutExpired, KeyboardInterrupt):
             subprocess.run(["docker", "rm", "--force", name], capture_output=True, timeout=15, check=False)
             raise ValueError("Build interrupted or exceeded the 120-second limit.") from None
+        metadata=build_metadata(run.stderr)
+        if metadata:print("PAPERCOLAB_BUILD_V1 "+json.dumps(metadata,separators=(",",":")))
         if run.returncode:
             reason = clean_log(run.stderr[-8000:]).strip()
             raise ValueError(reason or "The container could not finish the build.")

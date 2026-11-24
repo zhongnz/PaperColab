@@ -4,3 +4,5 @@ __pycache__/
 /corpus/local/
 /node_modules/
 /data/
+
+/pilot-local/

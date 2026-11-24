@@ -24,6 +24,7 @@ jobs:
       - run: python tests/browser_smoke.py --screenshots build/browser
       - run: python tests/editor_browser.py --screenshots build/browser --output-zip build/editor-edited.zip
       - run: python tests/project_browser.py
+      - run: python tests/onboarding_browser.py
       - run: python scripts/package.py --html build/PaperColab-Editor.html
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -54,12 +55,20 @@ jobs:
       - run: python scripts/package.py --zip sample.zip
       - run: docker pull texlive/texlive:TL2025-historic
       - run: python scripts/check_build.py --root estuary/main.tex --pdf checked.pdf sample.zip
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - run: python -m pip install playwright==1.56.0
+      - name: Test integrated local Docker PDF preview
+        run: python tests/preview_browser.py
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: browser-edited-project
           path: build
       - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils
+      - name: Verify isolated EPS recovery and supplied bibliography
+        run: python tests/eps_build_fixture.py
       - name: Compile the browser export and check its edited text
         run: |
           python scripts/check_build.py --root estuary/main.tex --pdf build/editor-edited.pdf build/editor-edited.zip
@@ -67,9 +76,22 @@ jobs:
           grep -F 'Replicate samples.' build/editor-edited.txt
           grep -F 'Revised sampling' build/editor-edited.txt
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '24'
+      - name: Verify pilot preflight and browser export with actual isolated builds
+        run: |
+          python -m scripts.pilot_check sample.zip --root estuary/main.tex --build --report build/pilot-preflight.json
+          python -m scripts.pilot_check sample.zip --root estuary/main.tex --edited build/editor-edited.zip --allow-changed estuary/sections/methods.tex --build --report build/pilot-comparison.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          before=json.loads(Path('build/pilot-preflight.json').read_text())
+          after=json.loads(Path('build/pilot-comparison.json').read_text())
+          assert before['status']=='baseline-ready'
+          assert after['status']=='review-required'
+          assert after['comparison']['changed_files']==['estuary/sections/methods.tex']
+          assert after['comparison']['unexpected_changes']==[]
+          assert after['matching_build_profile'] and after['manual_review_required']
+          PY
+
       - name: Fetch the pinned published manuscript
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

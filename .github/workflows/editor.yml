@@ -18,3 +18,27 @@ jobs:
       - run: npm run build:vendor
       - name: Confirm checked-in bundles and licence notices match the lockfile
         run: git diff --exit-code -- web/vendor
+      - name: Install isolated collaboration trial dependencies
+        run: npm install --prefix experiments/crdt --ignore-scripts --no-audit --no-fund
+      - name: Compare CRDT source and checkpoint contracts
+        run: npm test --prefix experiments/crdt
+      - name: Exercise authenticated experimental checkpoint transport
+        run: python3 experiments/crdt/transport_test.py
+      - name: Build optional browser collaboration bundle
+        run: node experiments/crdt/build-browser.mjs
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install playwright==1.56.0
+      - name: Exercise browser visual and source Yjs saves
+        run: python experiments/crdt/browser_test.py
+      - name: Exercise live revision and presence stream
+        run: python experiments/crdt/live_test.py
+      - name: Exercise durable local draft recovery
+        run: python experiments/crdt/draft_test.py
+      - name: Install optional official MCP SDK
+        run: python -m pip install -r agents/requirements-mcp.txt
+      - name: Exercise provider-independent task clients and MCP stdio
+        run: |
+          python -m unittest discover -s tests -p test_agents.py
+          python -m agents.mcp_test

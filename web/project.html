@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src blob:; base-uri 'none'; form-action 'none'">
   <title>Workspace · PaperColab</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="workspace-app">
   <header class="mast"><div class="mast-inner">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span>PaperColab</div>
     <a class="repo" href="index.html">Offline checker</a>
@@ -18,48 +18,111 @@
     <header class="intro">
       <p class="overline">Research workspace</p>
       <h1>Work on the project<span class="dot">.</span></h1>
-      <p>Import a manuscript, suggest a change in either editor, and let a person accept it. A release stays put after the draft moves on.</p>
+      <p>Write, collaborate, manage research evidence and prepare reproducible releases.</p>
     </header>
-    <div class="project-tools">
-      <label>Signed in as <select id="actor"></select></label>
-      <label>Token <input id="token" autocomplete="off" spellcheck="false"></label>
+    <div class="project-tools account-bar">
+      <label id="demo-account" hidden>Demo account <select id="actor"></select></label>
+      <label>Access token <input id="token" type="password" autocomplete="off" spellcheck="false"></label>
       <button type="button" class="secondary" id="use-token">Use token</button>
+      <button type="button" class="secondary" id="sign-out">Sign out</button>
       <span id="who" role="status"></span>
     </div>
     <p id="status" role="status" class="muted"></p>
     <div id="error" role="alert" hidden></div>
+    <div class="workspace-layout">
+    <aside class="workspace-sidebar" aria-label="Project navigation">
     <section class="panel" aria-labelledby="projects-heading">
       <h2 id="projects-heading">Projects</h2>
-      <div class="project-tools">
+      <div class="project-tools" id="project-create-tools" hidden>
         <label>Title <input id="new-title" value="New manuscript"></label>
         <button type="button" class="primary" id="create">Create project</button>
         <button type="button" class="secondary" id="example">Open the estuary example</button>
         <label class="secondary" style="padding:10px 17px;border-radius:5px">Import ZIP <input id="zip" type="file" accept=".zip,application/zip" hidden></label>
       </div>
-        <div class="project-tools">
+        <div class="project-tools" id="project-search-tools" hidden>
           <label>Search <input id="search"></label>
           <button type="button" class="secondary" id="run-search">Search</button>
         </div>
         <div id="search-results"></div>
         <div id="project-list"></div>
     </section>
-    <section id="open" class="stack" hidden>
-      <section class="panel">
+    <section class="panel" id="provision-panel" hidden>
+      <h2>Local accounts</h2>
+      <p class="muted">Operator only. Create a named account and share its access token securely.</p>
+      <label for="account-name">Name</label><input id="account-name" maxlength="120">
+      <label for="account-kind">Account kind</label><select id="account-kind"><option value="human">Human</option><option value="assistant">Assistant</option></select>
+      <button type="button" class="secondary" id="provision-account">Create local account</button>
+      <button type="button" id="list-accounts">Manage local accounts</button>
+      <div id="account-list"></div>
+      <div id="provision-result" hidden>
+        <label for="provision-id">Account ID (for project membership)</label><input id="provision-id" readonly>
+        <label for="provision-token">Access token (shown once)</label><input id="provision-token" readonly type="password" autocomplete="off">
+        <label><input type="checkbox" id="show-provision-token"> Show access token</label>
+        <button type="button" id="hide-provision">Clear credential</button>
+      </div>
+    </section>
+    </aside>
+    <div class="workspace-content">
+    <section class="panel" id="workspace-welcome">
+      <h2>Open a research project</h2>
+      <p id="welcome-message">Sign in with your local access token to get started.</p>
+      <p class="muted">Private development preview. Keep original manuscripts and work on test copies.</p>
+    </section>
+    <section id="open" class="stack" data-workspace-view="manuscript" hidden>
+      <section class="panel project-summary">
         <h2 id="project-title"></h2>
         <p id="readiness" class="muted"></p>
-        <div id="members"></div>
         <div class="project-tools">
           <button type="button" class="secondary" id="export">Download current ZIP</button>
           <button type="button" class="primary" id="release">Approve release</button>
         </div>
+        <nav id="workspace-nav" aria-label="Workspace views" class="workspace-nav">
+          <button type="button" data-workspace-tab="manuscript" aria-pressed="true">Manuscript</button>
+          <button type="button" data-workspace-tab="collaboration" aria-pressed="false">AI &amp; review <span id="review-count"></span></button>
+          <button type="button" data-workspace-tab="research" aria-pressed="false">Research library</button>
+          <button type="button" data-workspace-tab="settings" aria-pressed="false">Project settings</button>
+        </nav>
+      </section>
+      <section class="panel" data-workspace-panel="settings" id="project-settings">
+        <h2>Project team and releases</h2>
+        <div id="members"></div>
+        <div id="membership-form" hidden>
+          <p class="muted">Add an existing local account by its ID. Only project leads can change membership.</p>
+          <label for="member-id">Account ID</label><input id="member-id" autocomplete="off" spellcheck="false">
+          <label for="member-role">Project role</label><select id="member-role"><option value="author">Author</option><option value="reviewer">Reviewer</option><option value="reader">Reader</option><option value="lead">Lead</option></select>
+          <button type="button" id="add-member">Add or update member</button>
+        </div>
+        <section id="catalogue-upgrade" hidden>
+          <h3>Parser compatibility</h3>
+          <p class="muted">Preview a metadata upgrade for an existing manuscript file. Exact source ranges retain their identities; ambiguous boundaries require manual migration. Applying changes invalidates affected pending edits and checkpoints.</p>
+          <label for="upgrade-file">Manuscript file</label><select id="upgrade-file"></select>
+          <button type="button" id="preview-upgrade">Preview catalogue upgrade</button>
+          <p id="upgrade-result" role="status"></p>
+          <button type="button" id="apply-upgrade" hidden>Apply reviewed upgrade</button>
+        </section>
         <div id="releases"></div>
         <div class="project-tools">
           <label>Collection <input id="collection-name" value="Active papers"></label>
           <button type="button" class="secondary" id="save-collection">Save collection</button>
         </div>
       </section>
-      <section class="panel">
+      <section class="panel" data-workspace-panel="manuscript" id="manuscript-panel">
         <h2>Manuscript</h2>
+        <section id="pdf-preview" hidden>
+          <div class="project-tools">
+            <label for="preview-root">PDF root</label><select id="preview-root"></select>
+            <label for="preview-engine">Engine</label><select id="preview-engine"><option>pdflatex</option><option>xelatex</option><option>lualatex</option></select>
+            <button type="button" id="compile-preview">Compile saved revision</button>
+            <button type="button" id="clear-preview" class="secondary" disabled>Clear preview</button>
+          </div>
+          <p class="muted">Local Docker build. First three raster pages at most. Unsaved drafts are excluded; no automatic compilation.</p>
+          <p id="preview-status" role="status"></p>
+          <p id="preview-guidance" hidden></p>
+          <details id="preview-provenance" hidden><summary>Build identity</summary><pre id="preview-identity"></pre></details>
+          <pre id="preview-diagnostic" hidden></pre>
+          <button type="button" id="download-preview" hidden>Download compiled PDF</button>
+          <div id="preview-pages"></div>
+        </section>
         <div class="split">
           <div>
             <label for="file">File</label>
@@ -67,7 +130,60 @@
             <div id="blocks" class="stack" style="margin-top:12px"></div>
           </div>
           <div>
+            <div id="hosted-views" role="group" aria-label="Manuscript view" class="project-tools">
+              <button type="button" data-view="focused" aria-pressed="true">Focused</button>
+              <button type="button" data-view="document" aria-pressed="false">Document</button>
+              <button type="button" data-view="cells" aria-pressed="false">Cells</button>
+            </div>
+            <div id="crdt-option" class="project-tools" hidden>
+              <label><input type="checkbox" id="crdt-enabled"> Experimental Yjs saves</label>
+              <span class="muted">Prose and headings only. Explicit saves, no live keystroke merge.</span>
+              <a href="/experimental/crdt-NOTICES.txt" target="_blank" rel="noreferrer">Licences</a>
+            </div>
+            <div id="live-option" hidden>
+              <label><input type="checkbox" id="live-enabled"> Experimental live collaboration</label>
+              <p id="live-status" role="status" class="muted"></p>
+              <ul id="presence-list" aria-label="Other connected sessions"></ul>
+            </div>
+            <p id="sync-state" role="status" class="muted"></p>
+            <p id="hosted-draft-count" role="status" class="muted"></p>
+            <section id="local-recovery" class="local-recovery" aria-label="Local draft recovery">
+              <label><input type="checkbox" id="durable-drafts"> Keep drafts on this browser</label>
+              <p class="muted">Optional, unencrypted browser storage. Avoid on shared devices. Stored drafts are not manuscript revisions.</p>
+              <p id="draft-storage-status" role="status" class="muted"></p>
+              <div class="project-tools">
+                <button type="button" id="list-recovery">Show stored drafts</button>
+                <button type="button" id="keep-drafts" disabled>Keep drafts and reload manuscript</button>
+              </div>
+              <div id="recovery-list" class="stack"></div>
+              <div id="recovery-detail" hidden>
+                <p id="recovery-note" role="status"></p>
+                <div class="recovery-comparison">
+                  <div><strong>Original base</strong><pre id="recovery-base"></pre></div>
+                  <div><strong>Local draft</strong><pre id="recovery-local"></pre></div>
+                  <div><strong>Current server cell</strong><pre id="recovery-remote"></pre></div>
+                </div>
+                <label for="recovery-result">Reconciled LaTeX (review before submitting)</label>
+                <textarea id="recovery-result" rows="5" spellcheck="false"></textarea>
+                <div class="project-tools">
+                  <button type="button" id="recovery-refresh">Refresh server comparison</button>
+                  <button type="button" id="recovery-close">Close comparison</button>
+                  <button type="button" id="recovery-save">Save reconciled cell</button>
+                  <button type="button" id="recovery-propose">Propose reconciled cell</button>
+                  <button type="button" id="recovery-download">Download local draft</button>
+                  <button type="button" id="recovery-remove">Remove stored draft</button>
+                </div>
+              </div>
+            </section>
+            <div id="hosted-cells" hidden></div>
+            <div id="focused-cell">
             <p id="block-label" class="muted"></p>
+            <div class="project-tools">
+              <button type="button" class="primary" id="save-direct" hidden>Save cell directly</button>
+              <button type="button" class="secondary" id="discard-local" disabled>Discard local draft</button>
+              <button type="button" class="secondary" id="refresh-manuscript">Refresh manuscript</button>
+            </div>
+            <p class="muted">Human authors may save directly or submit a proposal. AI text proposals still require review; direct cell saves are human-only. Remote edits refresh idle views; local drafts are never automatically merged.</p>
             <div id="visual-host" class="surface"></div>
             <div id="source-host" class="surface" style="margin-top:10px"></div>
             <div class="project-tools">
@@ -76,16 +192,80 @@
               <button type="button" class="text-button" id="comment">Comment on this block</button>
             </div>
             <label>Comment <input id="comment-body" style="width:min(100%,420px)"></label>
+            </div>
           </div>
         </div>
       </section>
-      <section class="panel">
+      <section class="panel" data-workspace-panel="collaboration" id="workflow-panel" hidden>
+        <h2>Research workflows</h2>
+        <p class="muted">Plan several scoped research steps. Prerequisites require accepted contributions and an explicit human evaluation. Launch and retry are manual.</p>
+        <div id="workflow-form" hidden>
+          <label for="workflow-title">Workflow title</label>
+          <input id="workflow-title" maxlength="200" style="width:100%">
+          <label for="workflow-objective">Research objective</label>
+          <textarea id="workflow-objective" rows="3" maxlength="4000" style="width:100%"></textarea>
+          <button type="button" id="create-workflow">Create research workflow</button>
+          <label for="workflow-select">Workflow to extend</label>
+          <select id="workflow-select" style="max-width:100%"></select>
+          <div id="workflow-step-form" hidden>
+            <label for="workflow-step-title">Step title</label>
+            <input id="workflow-step-title" maxlength="200" style="width:100%">
+            <label for="workflow-cell">Target cell</label><select id="workflow-cell" style="max-width:100%"></select>
+            <label for="workflow-assistant">Assistant</label><select id="workflow-assistant"></select>
+            <label for="workflow-context">Explicit context objects</label><select id="workflow-context" multiple size="4" style="width:100%"></select>
+            <label for="workflow-dependencies">Prerequisite steps (optional)</label><select id="workflow-dependencies" multiple size="4" style="width:100%"></select>
+            <label for="workflow-instructions">Step instructions</label><textarea id="workflow-instructions" rows="3" maxlength="2400" style="width:100%"></textarea>
+            <label for="workflow-criteria">Acceptance criteria</label><textarea id="workflow-criteria" rows="3" maxlength="1200" style="width:100%"></textarea>
+            <button type="button" id="add-workflow-step">Add workflow step</button>
+          </div>
+        </div>
+        <div id="workflow-list" class="stack"></div>
+      </section>
+      <section class="panel" data-workspace-panel="collaboration" id="agent-tasks" hidden>
+        <h2>AI task delegation</h2>
+        <p class="muted">Assign one editable cell and explicitly selected research context. Restricted credentials permit one proposal, never direct manuscript edits. No model is called automatically.</p>
+        <div id="delegate-form" hidden>
+          <label for="delegate-cell">Target cell</label>
+          <select id="delegate-cell" style="max-width:100%"></select>
+          <label for="delegate-assistant">Assistant</label>
+          <select id="delegate-assistant"></select>
+          <label for="delegate-context">Research context (optional, select up to 12)</label>
+          <select id="delegate-context" multiple size="5" style="width:100%"></select>
+          <label for="delegate-instructions">Task instructions</label>
+          <textarea id="delegate-instructions" rows="3" maxlength="4000" style="width:100%"></textarea>
+          <button type="button" id="create-agent-task" class="primary">Create delegated task</button>
+          <div id="delegated-credential" hidden>
+            <p>Task ID: <code id="delegated-task-id"></code></p>
+            <label for="delegated-token">One-time displayed task credential (expires in 24 hours)</label>
+            <input id="delegated-token" readonly type="text" autocomplete="off" style="width:100%">
+            <p class="muted">Share only with your chosen local agent. Do not include in a paper, repository or chat transcript.</p>
+            <button type="button" id="hide-delegated-token">Hide credential</button>
+          </div>
+        </div>
+        <button type="button" id="refresh-agent-tasks" class="secondary">Refresh tasks and review</button>
+        <div id="agent-task-list" class="stack"></div>
+      </section>
+      <section class="panel" data-workspace-panel="collaboration">
         <h2>Review</h2>
         <p class="muted">Visual and source edits wait as the same kind of suggestion. Accepting one leaves an overlapping edit stale instead of merging it.</p>
         <div id="queue" class="queue stack"></div>
       </section>
-      <section class="panel">
-        <h2>Evidence</h2>
+      <section class="panel" data-workspace-panel="research" id="experiment-panel" hidden>
+        <h2>Computational research</h2>
+        <p class="muted">Pin local text code and datasets, download a bundle, run it explicitly in a trusted local Docker environment, and import the receipt for human review. The web server never executes code.</p>
+        <div id="experiment-form" hidden>
+          <label for="experiment-title">Experiment title</label><input id="experiment-title" maxlength="200" style="width:100%">
+          <label for="experiment-objective">Objective</label><textarea id="experiment-objective" rows="3" maxlength="4000" style="width:100%"></textarea>
+          <label for="experiment-language">Language</label><select id="experiment-language"><option value="python">Python</option><option value="r">R</option></select>
+          <label for="experiment-image">Exact local Docker image ID</label><input id="experiment-image" placeholder="sha256:..." style="width:100%">
+          <label for="experiment-code">Code object</label><select id="experiment-code" style="max-width:100%"></select>
+          <label for="experiment-datasets">Text datasets (optional)</label><select id="experiment-datasets" multiple size="4" style="width:100%"></select>
+          <button type="button" id="create-experiment">Register experiment</button>
+        </div>
+        <div id="experiment-list" class="stack"></div>
+      </section>
+      <section class="panel" data-workspace-panel="research">
+        <h2>Research library and evidence</h2>
         <div id="library"></div>
         <div class="project-tools">
           <label>Claim <input id="claim" style="width:min(100%,320px)"></label>
@@ -98,11 +278,12 @@
           </select></label>
           <label>Title <input id="object-title"></label>
           <label>External id <input id="object-id" placeholder="optional"></label>
+          <label for="object-body">Local text content (optional)</label><textarea id="object-body" rows="4" style="width:100%"></textarea>
           <button type="button" class="secondary" id="add-object">Add object</button>
         </div>
         <div id="links"></div>
       </section>
-      <section class="panel" id="operate">
+      <section class="panel" data-workspace-panel="settings" id="operate">
         <h2>Decisions and operation</h2>
         <div class="project-tools">
           <label>Decision <input id="decision" style="width:min(100%,360px)"></label>
@@ -120,6 +301,8 @@
         <div id="audit"></div>
       </section>
     </section>
+    </div>
+    </div>
   </main>
   <footer>PaperColab <span aria-hidden="true">/</span> Workspace</footer>
   <style>
@@ -131,6 +314,7 @@
   <script src="blocks.js"></script>
   <script src="editors.js"></script>
   <script src="identity.js"></script>
+  <script src="drafts.js"></script>
   <script src="project.js"></script>
 </body>
 </html>

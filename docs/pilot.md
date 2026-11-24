@@ -35,3 +35,7 @@ Freeze the 20-paper cohort and its baseline evidence before testing editor chang
 For the co-editing check, have two participants edit different blocks and then the same block from different modes. Test a move, an anchored comment and reconnecting after offline edits. Compare both clients with the exported source and review history. Count a group as retained when someone voluntarily returns to author or review after week four. Keep actual interview, retention and test counts separate from recruitment targets.
 
 If the week-eight checks fail, keep working on source fidelity and collaboration. The offline prototype covers one author editing a paragraph or heading and exporting with the surrounding source intact. The next collaboration milestone is a comment anchored to a persistent block ID that two authors can resolve after editing and reconnecting. Expand the manuscript corpus alongside that work.
+
+## Current controlled local testing
+
+Use the [local pilot protocol](local-pilot.md) and its private session/task templates for the first facilitated sessions. The protocol distinguishes actual source/PDF verification, task completion and observed retention from recruitment targets. It does not supersede the twenty-paper or production deployment gates.

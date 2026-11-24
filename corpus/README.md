@@ -48,3 +48,63 @@ python3 scripts/check_build.py --root main.tex --pdf corpus/local/baseline.pdf c
 ~~~
 
 Use the actual root from the report for the build. Record the source revision, ZIP SHA-256, compiler image digest, engine, root, required packages and output PDF. Mark a failed source build separately from an editor regression. Keep manuscript bytes and binaries in the local corpus unless redistribution has been cleared. For the editor trial, compare each original quarantined span byte for byte with its re-export, including comments, spacing and line endings. A static check or a successful original-source build cannot count as an editor round-trip.
+
+## Automated twenty-paper release benchmark
+
+The separate Manuscript compatibility benchmark workflow runs all twenty pinned
+sources in four five-paper shards (at most two concurrent). The first uses the
+existing pinned emcee checkout; the remaining sources are downloaded as exact
+arXiv versions and repackaged without changing file bytes. Downloads have a
+bounded size and approved HTTPS host/version; source bytes, logs and PDFs are
+not uploaded as artifacts. JSON reports contain hashes, root candidates, source
+versions, compiler image identity, coverage, and stage outcomes. Multiple root
+candidates are reported unresolved unless a reviewed explicit root override is
+provided. No attempt is made to repair a paper or guess its compiler; default
+pdfLaTeX, optional manifest engine. A pass requires a successful original build,
+byte preservation outside a single supported edit, re-import and source-mode
+edit validation, a successful edited PDF build, and the marker in extracted PDF
+text. A reachable included TeX file may be edited when the root lacks a supported
+paragraph. Missing downloads, baseline failures, unsupported roots, missing
+editable paragraphs and edited-build failures all remain separate statuses.
+The aggregate job fails below 18/20, and rejects missing or duplicate results.
+This is a diagnostic release gate, not a claim that the corpus currently passes.
+TeX execution remains in the existing isolated Docker verifier. The actual
+image ID and repository digests are recorded, and the tag is checked for changes
+at the end of each successful trial; no image pulls occur during verification.
+
+Local example (Docker, Node, Python and pdftotext required; pre-pull the TeX image):
+
+~~~sh
+python -m corpus.benchmark --shard 0 --work corpus/local/benchmark --report corpus/local/report-0.json --emcee corpus/local/emcee
+# Repeat for shards 1–3 with new directories or the unused shard folders.
+python -m corpus.summarize --require-gate corpus/local/report-*.json
+~~~
+
+Only the reports are retained in CI. Review source-specific licensing before
+redistributing any manuscript or compiled PDF. This benchmark exercises the
+shared browser parser/export model, not twenty real browser sessions or hosted
+collaboration tests. The existing browser tests separately exercise real UI.
+
+Coverage percentage applies only to classified paragraph ranges in inspected files; full-file parser fallbacks and unreadable sources can remain uncounted. The aggregate report makes this limitation explicit. The new multi-file fixture tests the same target and round-trip commands, including rejection of unreachable files.
+
+## First complete benchmark and targeted improvements
+
+The first full run (690a9be, 24 November 2026, [CI record](https://github.com/zhongnz/PaperColab/actions/runs/45424196170)) acquired all twenty sources: 8 passed, 8 failed original-source compilation, 2 had unresolved roots, and 2 compiled but had no editable paragraph. Classified paragraph coverage was 33.1% across 18 inspected papers. All eight papers that reached an edited build passed. This is not evidence of broad compatibility. PPO v1 is a PDF-inclusion wrapper; a visual LaTeX editor cannot recover the absent editable manuscript from that wrapper. The other no-editable case (diffusion) needs parser investigation. Multiple candidate roots in MAML and BART require inspection; no filename-based guesses are made.
+
+Next reports classify build errors using a fixed diagnostic vocabulary, include root-candidate coverage and full-file parser fallback reasons, and count whole-file fallbacks separately. Diagnostic classification is heuristic; inspect original logs locally when necessary. Expanded protected one-brace citation variants and conservative literal HTTP(S) URL tokens improve supported prose without expanding custom macros, optional arguments or comment-containing ranges. Untouched source remains authoritative. No paper is replaced to improve the denominator, and no build safety controls are relaxed. Re-run the same corpus to measure the change.
+
+The 4508337 run again passed 8/20, with classified coverage 33.4%. The initial shell-escape diagnostic was invalid because it matched the normal compiler command. The next increment filters command/status lines and requires a positive indication of missing shell escape; it does not enable shell escape. Ambiguous roots may now resolve only if a unique literal title begins with the pinned bibliographic title and the candidate contains a class and document body; ties stay unresolved. The selection basis and all candidate title evidence are reported. Added protected literal optional citation notes, simple footnotes, labels, and selected inline text commands. Complex arguments, comments, custom macros and full-file conditional fallbacks remain conservative. No successful build or coverage improvement is claimed until the next run completes.
+
+The next increment treats a bounded comment with exactly one physical line ending as an opaque source token in a prose paragraph, with a reparse guard on visual edits. Comments inside formatting, incomplete comments and uncertain syntax remain raw. Standard explicitly delimited zero-argument macros (e.g. `\\LaTeX{}`) are supported as protected tokens. The report additionally inventories candidate project macro declarations (name/arity only, heuristic) without expanding them or granting arbitrary macros editable status. Actual arbitrary-macro support requires a project-aware signature model shared with the hosted cell parser. Build diagnostics now retain the first explicit TeX error locally as well as the latexmk tail. No raw build logs are uploaded. Onboarding test readiness and disabled provisioning controls are also tightened after an intermittent browser failure.
+
+A narrow file-local macro registry is now shared by full manuscript parsing and contextual cell editing. It recognises top-level complete braced `newcommand` declarations in a single document preamble with literal replacement text (optionally one/two literal parameters), rejects visible redefinitions and built-in collisions, and protects only explicitly delimited invocations with literal arguments. No expansion, included-file/package scope resolution, optional defaults, complex arguments or dynamic TeX analysis. The corpus records recognised literal signatures separately from heuristic declarations. Hosted proposal and direct-save tests exercise the shared parser. This is not a general project-wide TeX macro registry; existing hosted catalogues from older parser versions may need a fresh import into a new test project, and automatic catalogue migration remains outstanding. A comment regression now asserts the original leading space captured by the PEG parser, and structural split/merge/convert of comment-bearing cells is blocked conservatively.
+
+The visual editor now attempts an exact source-span patch for a single changed aligned text run, with AST offsets mapped to original UTF-16 coordinates, including escaped text, formatting contents, collapsed whitespace and astral characters. A candidate must reparse to the intended visual representation. Unsupported/multi-run or formatting changes retain the existing cell serializer; this is not a general minimal-edit guarantee. The surrounding source outside an edited cell remains byte-preserved as before.
+
+The shared parser now supports a bounded cross-file context for a single root with pure literal preamble definition inputs and direct leaf section inputs. The same context is applied in target selection, coverage and round-trip reimport. The benchmark checks that shared signatures remain unchanged after the edit. Multiple roots, complex preamble inputs, nested includes and uncertain paths remain on local parsing. No claims about broad project macro compatibility until corpus results are available.
+
+The 0cf8a23 benchmark completed at 8/20 (nine original-build failures, two no-editable-paragraph cases, one unresolved root), with 34.6% classified paragraph coverage across 19 inspected manuscripts. This is the baseline for the cross-file prototype. The core source-patch and catalogue-upgrade workflows passed. A fast no-literal-input check avoids unnecessary extra root parsing in the context resolver.
+
+## Compiler compatibility recovery
+
+The fdf2194 benchmark passed 8/20, with nine original-build failures (five generic LaTeX errors, one shell-escape classification, three unclassified). The compiler now explicitly preserves a root-matching supplied `.bbl` when no `.bib` exists in the archive; mirrors existing include directories into the isolated output directory; and attempts one bounded EPS recovery after positive evidence of a missing expected epstopdf conversion. It restarts from the exact ZIP and invokes fixed Ghostscript `-dSAFER` PDF conversion on at most eight conventional EPS paths, with input/output/time limits, never overwriting a supplied PDF. Generated files stay inside the disposable worker. No arbitrary shell escape, package installation, source edits or generic retry. Baseline and edited builds must use the same recorded compatibility profile; reports distinguish EPS-recovered passes and include bounded missing dependency basenames and error package names, not raw logs. The official latexmk manual documents the supplied-bbl mode (`-bibtex-`): https://manpages.debian.org/unstable/latexmk/latexmk.1.en.html. The previous corpus gate remains unmet until a rerun establishes results. Synthetic host and isolated-container fixtures verify actual figure and citation output, not merely a PDF header.

@@ -138,12 +138,9 @@ test('coverage counts editable blocks and names the command that preserved a par
   assert.equal(B.exportText(file), source);
   const report = B.coverage(file);
   assert.equal(report.editableHeadings, 1);
-  assert.equal(report.editableParagraphs, 1);
-  assert.equal(report.fallbackParagraphs, 2);
-  assert.equal(report.editableBlocks, 2);
-  const commands = Object.fromEntries(report.fallbackCommands.map(item => [item.command, item.blocks]));
-  assert.equal(commands.footnote, 1);
-  assert.equal(commands.cite, 1);
+  assert.equal(report.editableParagraphs, 3);
+  assert.equal(report.fallbackParagraphs, 0);
+  assert.equal(report.editableBlocks, 4);
 });
 
 test('editing prose preserves multiline math tokens, textit semantics and raw macro definitions', () => {
@@ -156,4 +153,259 @@ test('editing prose preserves multiline math tokens, textit semantics and raw ma
   for (const contents of [tex`\emph{one \emph{two}}`,tex`A \verb|\section{literal}| here.`]) {
     assert.deepEqual(B.parseFile(contents).blocks.map(b=>b.kind), ['raw']);
   }
+});
+
+test('structural transactions preserve unrelated bytes, IDs and protected tokens', () => {
+  const text = 'First café $x$.\r\n\r\nSecond paragraph.\r\n\r\n\\begin{tabular}{c}x\\end{tabular}\r\n';
+  const original = B.parseFile(text);
+  const [a,b,raw] = original.blocks;
+  assert.equal(a.kind,'paragraph'); assert.equal(b.kind,'paragraph'); assert.equal(raw.kind,'raw');
+  const run = (f,id,action,options) => B.structural(f,id,action,options);
+  let r = run(original,a.id,'insert',{kind:'paragraph'});
+  const added = r.selectedId;
+  assert.notEqual(added,b.id);
+  assert.equal(B.exportText(original),text);
+  assert.equal(B.current(r.file,r.file.blocks.find(x=>x.id===raw.id)),B.current(original,raw));
+  assert.equal(B.current(r.file,r.file.blocks.find(x=>x.id===b.id)),'Second paragraph.');
+  r = run(r.file,added,'move-down');
+  assert.deepEqual(r.file.blocks.map(x=>x.id),[a.id,b.id,added,raw.id]);
+  r = run(r.file,added,'convert');
+  assert.equal(r.file.blocks.find(x=>x.id===added).kind,'heading');
+  r = run(r.file,added,'convert');
+  r = run(r.file,added,'delete');
+  assert.deepEqual(r.file.blocks.map(x=>x.id),[a.id,b.id,raw.id]);
+  r = run(r.file,a.id,'split',{offset:6});
+  const split = r.selectedId;
+  assert.notEqual(split,added);
+  assert.deepEqual(B.tokens(r.file.blocks.find(x=>x.id===split).rich),['$x$']);
+  r = run(r.file,a.id,'merge-next');
+  assert.deepEqual(B.tokens(r.file.blocks.find(x=>x.id===a.id).rich),['$x$']);
+  assert.equal(B.current(r.file,r.file.blocks.find(x=>x.id===raw.id)),B.current(original,raw));
+  assert.throws(()=>run(r.file,b.id,'move-down'),/boundary/);
+  assert.throws(()=>run(r.file,raw.id,'delete'),/preserved/i);
+  assert.equal(B.exportText(original),text);
+});
+test('structural editing includes prior edits and keeps mixed line endings outside the patch', () => {
+  const text = 'First.\r\n\r\nSecond.\n\nThird.\r\n';
+  const f = B.parseFile(text);
+  const [a,b,c] = f.blocks;
+  B.editSource(f,c,'Third revised.');
+  const r = B.structural(f,b.id,'insert',{kind:'heading'});
+  assert.equal(B.exportText(r.file), 'First.\r\n\r\nSecond.\r\n\r\n\\section{New section}\r\n\r\n\n\nThird revised.\r\n');
+  assert.equal(r.file.blocks.find(x=>x.id===c.id).kind,'paragraph');
+  assert.equal(B.current(r.file,r.file.blocks.find(x=>x.id===c.id)),'Third revised.');
+});
+test('structural split refuses invalid caret and never mutates input', () => {
+  const f = B.parseFile('A 🐋 and $x$.');
+  const p = f.blocks[0];
+  assert.throws(()=>B.structural(f,p.id,'split',{offset:3}),/Unicode/);
+  assert.throws(()=>B.structural(f,p.id,'split',{offset:0}),/caret/);
+  assert.equal(B.exportText(f),f.original);
+});
+
+test('scientific adapters patch exact fields and preserve other source',()=>{
+  const table='\\begin{tabular}{lr}\r\n\\toprule\r\nName & 12 \\\\\r\n\\bottomrule\r\n\\end{tabular}';
+  const model=B.scientific(table);
+  assert.equal(model.type,'table');
+  assert.deepEqual(model.fields.map(f=>f.value),['Name','12']);
+  const edited=B.scientificEdit(table,['Name','34']);
+  assert.equal(edited,table.replace('12','34'));
+  assert.throws(()=>B.scientificEdit(table,['Name','x & y']),/Invalid/);
+  assert.equal(B.scientific(table.replace('Name','\\multicolumn{1}{l}{Name}')),null);
+  const equation='\\begin{equation}\n\\frac{x}{2}\n\\end{equation}';
+  assert.equal(B.scientific(equation).type,'equation');
+  assert.equal(B.scientificEdit(equation,['\n\\frac{y}{2}\n']),equation.replace('x','y'));
+  assert.throws(()=>B.scientificEdit(equation,['\\input{private}']),/Invalid/);
+  const figure='\\begin{figure}[ht]\n\\centering\n\\includegraphics{figures/a.png}\n\\caption{Old caption}\\label{fig:a}\n\\end{figure}';
+  assert.equal(B.scientific(figure).type,'figure');
+  assert.equal(B.scientificEdit(figure,['figures/a.png','New caption']),figure.replace('Old caption','New caption'));
+  assert.throws(()=>B.scientificEdit(figure,['../secret','Caption']),/Invalid/);
+  const list='\\begin{enumerate}\n\\item First\n\\item Second\n\\end{enumerate}';
+  assert.equal(B.scientificEdit(list,['First','Third']),list.replace('Second','Third'));
+  const source='Before.\n\n'+table+'\n\nAfter.';
+  const file=B.parseFile(source), [a,t,z]=file.blocks;
+  const result=B.structural(file,t.id,'scientific',{values:['Name','34']});
+  assert.equal(B.exportText(result.file),source.replace('12','34'));
+  assert.deepEqual(result.file.blocks.map(b=>b.id),[a.id,t.id,z.id]);
+  assert.equal(B.exportText(file),source);
+  const inserted=B.structural(file,a.id,'insert',{kind:'equation'});
+  assert.equal(B.scientific(B.current(inserted.file,inserted.file.blocks.find(b=>b.id===inserted.selectedId))).type,'equation');
+});
+test('citation keys and explicit citation insertion retain existing tokens',()=>{
+  assert.deepEqual(B.bibliographyKeys('@misc{one,\n title={Example}\n}\n@string{abc="X"}\n@article(two, title={Y})'),['one','two']);
+  const file=B.parseFile('Existing $x$.'), p=file.blocks[0];
+  B.appendCitation(file,p,'one');
+  assert.equal(B.exportText(file),'Existing $x$.~\\cite{one}');
+  assert.deepEqual(B.tokens(B.rich(file,p)),['$x$','\\cite{one}']);
+  assert.throws(()=>B.appendCitation(file,p,'bad}'),/citation/);
+});
+
+test('scientific source edits and field edits share validated source checkpoints',()=>{
+  const source='Before.\r\n\r\n\\begin{equation}\r\nx = y\r\n\\end{equation}\r\n\r\nAfter.';
+  const file=B.parseFile(source), [a,e,z]=file.blocks;
+  const result=B.structural(file,e.id,'scientific-source',{source:'\\begin{equation}\r\nx = z\r\n\\end{equation}'});
+  assert.equal(B.exportText(result.file),source.replace('x = y','x = z'));
+  assert.deepEqual(result.file.blocks.map(b=>b.id),[a.id,e.id,z.id]);
+  assert.equal(B.scientific(B.current(result.file,result.file.blocks[1])).fields[0].value,'\r\nx = z\r\n');
+  assert.throws(()=>B.structural(file,e.id,'scientific-source',{source:'\\begin{equation}x\\end{equation}\n\nExtra.'}),/Keep one supported/);
+  assert.equal(B.exportText(file),source);
+});
+test('archive reader retains local bibliography text without modifying ZIP',async()=>{
+  const writer=new zip.ZipWriter(new zip.BlobWriter(),{useWebWorkers:false});
+  const bib='@article{local,\n title={Local reference}\n}';
+  await writer.add('references.bib',new zip.TextReader(bib));
+  const blob=await writer.close(), files=await A.readArchive(blob);
+  assert.equal(files.get('references.bib').text,bib);
+  assert.deepEqual(B.bibliographyKeys(files.get('references.bib').text),['local']);
+  assert.strictEqual(await A.exportArchive(blob,new Map()),blob);
+});
+
+test('local raster preview resolves only explicit archive assets and reads bounded bytes',async()=>{
+  const writer=new zip.ZipWriter(new zip.BlobWriter(),{useWebWorkers:false});
+  const bytes=Uint8Array.from([137,80,78,71,13,10,26,10]);
+  await writer.add('project/figures/a.png',new zip.Uint8ArrayReader(bytes));
+  await writer.add('project/figures/a.svg',new zip.TextReader('<svg/>'));
+  const blob=await writer.close(), files=await A.readArchive(blob);
+  assert.deepEqual(A.rasterCandidates(files,'project/main.tex','project/sections/methods.tex','figures/a'),['project/figures/a.png']);
+  assert.deepEqual(A.rasterCandidates(files,'project/main.tex','project/sections/methods.tex','../figures/a'),[]);
+  assert.deepEqual(A.rasterCandidates(files,'project/main.tex','project/sections/methods.tex','figures/a.svg'),[]);
+  const image=await A.readRaster(blob,'project/figures/a.png');
+  assert.equal(image.type,'image/png');
+  assert.deepEqual(new Uint8Array(await image.arrayBuffer()),bytes);
+  await assert.rejects(()=>A.readRaster(blob,'project/figures/a.svg'),/Only PNG/);
+  assert.strictEqual(await A.exportArchive(blob,new Map()),blob);
+});
+
+test('single-argument citation variants and literal URLs remain protected through visual edits', () => {
+  const source = 'See \\citealt{a}, \\citetalias{b}, \\cref{sec:test} and \\url{https://example.org/paper_1}.';
+  const file = B.parseFile(source), p = file.blocks[0];
+  assert.equal(p.kind,'paragraph');
+  assert.deepEqual(B.tokens(p.rich),['\\citealt{a}','\\citetalias{b}','\\cref{sec:test}','\\url{https://example.org/paper_1}']);
+  B.editVisual(file,p,append(p.rich,' Extra.'));
+  assert.equal(B.exportText(file),source+' Extra.');
+  assert.deepEqual(B.tokens(B.parseFile(B.exportText(file)).blocks[0].rich),B.tokens(p.rich));
+  for(const unsafe of ['\\citealt[\\macro]{a}','\\citealt{\\macro}','\\url{https://example.org/a%20b}','\\custom{a}']){
+    assert.equal(B.parseFile('See '+unsafe+'.').blocks[0].kind,'raw');
+  }
+  const raw=B.coverage(B.parseFile('\\iftrue unsafe\\fi'));
+  assert.equal(raw.fullFileFallback,true);
+  assert.match(raw.fullFileReason,/conditional|delimiter/i);
+});
+
+test('literal optional citation notes and simple opaque inline text retain exact source', () => {
+  const s=tex`A \footnote{Plain note.} and \citep[see][p.~3]{key}, \texttt{model-v1}, \textsc{Method}, \label{sec:one}.`;
+  const file=B.parseFile(s),p=file.blocks[0];
+  assert.equal(p.kind,'paragraph');
+  assert.deepEqual(B.tokens(p.rich),[tex`\footnote{Plain note.}`,tex`\citep[see][p.~3]{key}`,tex`\texttt{model-v1}`,tex`\textsc{Method}`,tex`\label{sec:one}`]);
+  B.editVisual(file,p,append(p.rich,' Done.'));
+  assert.equal(B.exportText(file),s+' Done.');
+  for(const raw of [tex`\footnote{With \input{other}}`,tex`\citep[\custom]{key}`,tex`\texttt{a_b}`]){
+    assert.equal(B.parseFile('See '+raw+'.').blocks[0].kind,'raw');
+  }
+});
+
+test('bounded inline comments preserve exact line endings and never become plain text', () => {
+  for (const newline of ['\n','\r\n']) {
+    const comment=' % reviewer note  '+newline;
+    const source='First sentence.'+comment+'Second sentence.';
+    const file=B.parseFile(source), p=file.blocks[0];
+    assert.equal(p.kind,'paragraph');
+    assert.deepEqual(B.tokens(p.rich),[comment]);
+    const changed=append(p.rich,' Added.');
+    B.editVisual(file,p,changed);
+    assert.ok(B.exportText(file).includes(comment));
+    assert.ok(B.exportText(file).endsWith('Second sentence. Added.'));
+    assert.deepEqual(B.tokens(B.parseFile(B.exportText(file)).blocks[0].rich),[comment]);
+    const marked=clone(changed);
+    marked.content[0].content.find(n=>n.type==='texToken').marks=[{type:'bold'}];
+    assert.throws(()=>B.editVisual(file,p,marked),/protected comments/);
+    assert.throws(()=>B.editVisual(file,p,{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Discarded comment'}]}]}),/citation and math/);
+  }
+  assert.equal(B.parseFile('% only a comment\n').blocks[0].kind,'raw');
+  assert.equal(B.parseFile('Text \\textbf{a% note\nb}.').blocks[0].kind,'raw');
+});
+
+test('explicitly delimited zero-argument standard macros are preserved; unknown project macros stay raw',()=>{
+  const source='Use \\LaTeX{} with \\ldots{} in this sentence.';
+  const f=B.parseFile(source),p=f.blocks[0];
+  assert.equal(p.kind,'paragraph');
+  assert.deepEqual(B.tokens(p.rich),['\\LaTeX{}','\\ldots{}']);
+  B.editVisual(f,p,append(p.rich,' Done.'));
+  assert.equal(B.exportText(f),source+' Done.');
+  assert.equal(B.parseFile('Use \\custom{} here.').blocks[0].kind,'raw');
+});
+
+test('file-local literal macro declarations enable protected, explicitly delimited invocations',()=>{
+  const source=[
+    '\\documentclass{article}',
+    '\\newcommand{\\methodname}{Research method}',
+    '\\newcommand{\\pairname}[2]{#1 and #2}',
+    '\\newcommand{\\unsafe}[1]{\\input{#1}}',
+    '\\begin{document}',
+    'Use \\methodname{} with \\pairname{A}{B} here.',
+    '',
+    'Unknown \\unsafe{a}.',
+    '\\end{document}'
+  ].join('\n');
+  const file=B.parseFile(source,{root:true});
+  assert.deepEqual([...file.macros],[['methodname',0],['pairname',2]]);
+  const p=file.blocks.find(x=>x.rich&&x.kind==='paragraph');
+  assert.deepEqual(B.tokens(p.rich),['\\methodname{}','\\pairname{A}{B}']);
+  assert.equal(B.exportText(file),source);
+  const quote=B.current(file,p);
+  assert.equal(B.parseFile(quote).blocks[0].kind,'raw');
+  assert.deepEqual(B.tokens(B.parseFile(quote,{macros:file.macros}).blocks[0].rich),B.tokens(p.rich));
+  B.editVisual(file,p,append(p.rich,' Done.'));
+  assert.equal(B.exportText(file),source.slice(0,p.to)+' Done.'+source.slice(p.to));
+  B.editSource(file,p,quote.replace('{A}{B}','{C}{D}'));
+  assert.deepEqual(B.tokens(B.rich(file,p)),['\\methodname{}','\\pairname{C}{D}']);
+  assert.throws(()=>B.editSource(file,p,'Use \\pairname{A} only.'),/Keep one supported/);
+  assert.equal(B.parseFile(source.replace('\\begin{document}','\\renewcommand{\\methodname}{Other}\n\\begin{document}'),{root:true}).macros.has('methodname'),false);
+});
+
+test('single text-run edits patch original source spans rather than normalising unchanged whitespace',()=>{
+  const source='Initial  observation.\r\nSecond sentence with \\textbf{bold  words} and $x$.';
+  const file=B.parseFile(source),p=file.blocks[0];
+  const next=clone(p.rich);
+  next.content[0].content.find(n=>n.type==='text'&&n.text.includes('observation')).text=
+    next.content[0].content.find(n=>n.type==='text'&&n.text.includes('observation')).text.replace('observation','measurement');
+  B.editVisual(file,p,next);
+  assert.equal(B.exportText(file),source.replace('observation','measurement'));
+  const second=clone(B.rich(file,p));
+  const bold=second.content[0].content.find(n=>n.type==='text'&&n.marks?.some(m=>m.type==='bold'));
+  bold.text=bold.text.replace('words','terms');
+  B.editVisual(file,p,second);
+  assert.equal(B.exportText(file),source.replace('observation','measurement').replace('words','terms'));
+});
+
+test('text patch maps escaped characters and astral Unicode without rewriting neighbouring source',()=>{
+  const source='A  whale 🐋 and \\% result.';
+  const file=B.parseFile(source),p=file.blocks[0];
+  const next=clone(p.rich);
+  next.content[0].content[0].text=next.content[0].content[0].text.replace('🐋','🐬').replace('%','%');
+  B.editVisual(file,p,next);
+  assert.equal(B.exportText(file),source.replace('🐋','🐬'));
+});
+
+test('bounded shared preamble signatures reach only directly included leaf sections',()=>{
+  const root='paper/main.tex', leaf='paper/sections/results.tex';
+  const source='\\documentclass{article}\n\\input{macros}\n\\begin{document}\n\\input{sections/results}\n\\end{document}';
+  const definitions='\\newcommand{\\modelname}{Model A}\n\\newcommand{\\score}[1]{Score #1}\n';
+  const prose='We use \\modelname{} with \\score{A}.';
+  const entries=[[root,source],['paper/macros.tex',definitions],[leaf,prose],['paper/unreachable.tex',prose]];
+  const contexts=B.projectContexts(entries,[root]);
+  assert.deepEqual(contexts[leaf],[['modelname',0],['score',1]]);
+  assert.deepEqual(contexts[root],contexts[leaf]);
+  assert.equal(contexts['paper/unreachable.tex'],undefined);
+  const part=B.parseFile(prose,{macros:new Map(contexts[leaf])}),p=part.blocks[0];
+  assert.equal(p.kind,'paragraph');
+  B.editVisual(part,p,append(p.rich,' Done.'));
+  assert.equal(B.exportText(part),prose+' Done.');
+  const replace=(path,value)=>entries.map(([p,t])=>[p,p===path?value:t]);
+  assert.equal(Object.keys(B.projectContexts(replace('paper/macros.tex',definitions+'\\input{more}\n'),[root])).length,0);
+  assert.equal(Object.keys(B.projectContexts(replace(leaf,prose+'\\input{more}'),[root])).length,0);
+  assert.equal(Object.keys(B.projectContexts(replace(root,source.replace('\\input{macros}','\\input{../macros}')),[root])).length,0);
+  assert.equal(Object.keys(B.projectContexts(entries,[root,'other.tex'])).length,0);
+  const collision=B.projectContexts(replace('paper/unreachable.tex','\\renewcommand{\\modelname}{Other}'),[root]);
+  assert.deepEqual(collision[leaf],[['score',1]]);
 });

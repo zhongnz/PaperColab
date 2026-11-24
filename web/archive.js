@@ -4,7 +4,7 @@
   const MiB = 1024 * 1024;
   const limits = { archive: 64 * MiB, expanded: 256 * MiB, entries: 4000, text: 4 * MiB, allText: 32 * MiB };
   const isConversation = path => /(^|\/)conversations?\//i.test(path);
-  const isText = path => /\.(tex|ltx|cls|sty|json)$/i.test(path) && !isConversation(path);
+  const isText = path => /\.(tex|ltx|cls|sty|bib|json)$/i.test(path) && !isConversation(path);
   const validPath = path => path.length <= 1024 && !/[\\:\u0000-\u001f\u007f]/.test(path) &&
     path.split('/').every(part => part && part !== '.' && part !== '..');
 
@@ -121,5 +121,37 @@
       await reader.close();
     }
   }
-  globalThis.PaperColabArchive = { readArchive, exportArchive, isConversation };
+  // Preview only bounded raster assets from the already verified archive.
+  // SVG, PDF and remote URLs are intentionally not loaded into the editor.
+  const rasterTypes = {png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp'};
+  function rasterCandidates(files, root, source, target) {
+    if (typeof target !== 'string' || !/^[A-Za-z0-9_.\/-]+$/.test(target) || !validPath(target)) return [];
+    const folder = path => path.includes('/') ? path.slice(0,path.lastIndexOf('/')+1) : '';
+    const suffixes = /\.[A-Za-z0-9]+$/.test(target) ? [''] : ['.png','.jpg','.jpeg','.gif','.webp'];
+    return [...new Set([folder(root),folder(source)].flatMap(dir=>suffixes.map(ext=>dir+target+ext)))].filter(name=>
+      files.has(name) && Object.hasOwn(rasterTypes,name.split('.').at(-1).toLowerCase()));
+  }
+  async function readRaster(blob, path) {
+    if (!validPath(path)) throw new Error('Unsupported image path.');
+    const mime = rasterTypes[path.split('.').at(-1).toLowerCase()];
+    if (!mime) throw new Error('Only PNG, JPEG, GIF and WebP previews are supported.');
+    const reader=new zip.ZipReader(new zip.BlobReader(blob),{useWebWorkers:false});
+    try {
+      for await (const entry of reader.getEntriesGenerator()) {
+        if (entry.directory || entry.filename.replace(/^(?:\.\/)+/,'')!==path) continue;
+        if (entry.uncompressedSize>5*MiB) throw new Error('Image exceeds the 5 MiB preview limit.');
+        let size=0;
+        const chunks=[];
+        await entry.getData(new WritableStream({write(chunk){
+          size+=chunk.length;
+          if(size>5*MiB || size>entry.uncompressedSize) throw new Error('Image exceeds its declared size.');
+          chunks.push(chunk.slice());
+        }}),{checkSignature:true,checkOverlappingEntry:true});
+        if(size!==entry.uncompressedSize) throw new Error('Incomplete image.');
+        return new Blob(chunks,{type:mime});
+      }
+      throw new Error('Image not found in the imported ZIP.');
+    } finally {await reader.close();}
+  }
+  globalThis.PaperColabArchive = { readArchive, exportArchive, isConversation, rasterCandidates, readRaster };
 })();

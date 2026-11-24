@@ -38,8 +38,8 @@
     return { ok: true, blocks, unresolved: previous.filter(prior => !used.has(prior.stableId)).map(prior => prior.stableId) };
   }
 
-  function oneBlock(source, kind) {
-    const parsed = B().parseFile(source);
+  function oneBlock(source, kind, macros = null) {
+    const parsed = B().parseFile(source,{macros});
     const supported = parsed.blocks.filter(block => block.kind === kind);
     if (parsed.blocks.length !== 1 || supported.length !== 1 || supported[0].from !== 0 || supported[0].to !== source.length) {
       return null;
@@ -47,15 +47,16 @@
     return supported[0];
   }
 
-  function applyEdit(text, previous, stableId, after, root) {
+  function applyEdit(text, previous, stableId, after, root, macros=null) {
     const block = previous.find(item => item.stableId === stableId);
     if (!block) return { ok: false, error: 'Unknown block.' };
     if (after === block.quote) return { ok: false, error: 'The suggestion does not change the block.' };
-    if (!oneBlock(after, block.kind)) {
+    const context=B().parseFile(text,{root,macros});
+    if (!oneBlock(after, block.kind, context.macros)) {
       return { ok: false, error: 'This change needs review. It does not stay one block.', unresolved: [stableId], result: 'needs-review' };
     }
     const nextText = text.slice(0, block.from) + after + text.slice(block.to);
-    const parsed = B().parseFile(nextText, { root });
+    const parsed = B().parseFile(nextText, { root,macros });
     const listed = catalogue(parsed, previous, { stableId, kind: block.kind, quote: after });
     if (!listed.ok) return listed;
     return { ok: true, text: nextText, blocks: listed.blocks, unresolved: listed.unresolved, result: 'accepted' };
@@ -77,7 +78,7 @@
     return best;
   }
 
-  function moveBlock(text, previous, stableId, toOffset, root) {
+  function moveBlock(text, previous, stableId, toOffset, root, macros=null) {
     const block = previous.find(item => item.stableId === stableId);
     if (!block) return { ok: false, error: 'Unknown block.' };
     if (!Number.isInteger(toOffset) || toOffset < 0 || toOffset > text.length) return { ok: false, error: 'The destination is outside the file.' };
@@ -88,7 +89,7 @@
     const prefix = at > 0 && !removed.slice(0, at).endsWith('\n\n') ? '\n\n' : '';
     const suffix = at < removed.length && !removed.slice(at).startsWith('\n\n') ? '\n\n' : '';
     const nextText = removed.slice(0, at) + prefix + slice + suffix + removed.slice(at);
-    const parsed = B().parseFile(nextText, { root });
+    const parsed = B().parseFile(nextText, { root,macros });
     const listed = catalogue(parsed, previous, { stableId, kind: block.kind, quote: slice, near: at + prefix.length });
     if (!listed.ok) return listed;
     return { ok: true, text: nextText, blocks: listed.blocks, unresolved: listed.unresolved, result: 'moved' };

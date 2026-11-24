@@ -8,8 +8,12 @@ WEB = ROOT / "web"
 
 
 class Api:
-    def __init__(self, service):
+    def __init__(self, service, preview=False):
         self.service = service
+        from server.preview import Preview
+        self.preview=Preview(service,preview)
+        from server.live import Live
+        self.live = Live(service)
 
     def handle(self, method, target, headers, body):
         parts = urlsplit(target)
@@ -21,27 +25,58 @@ class Api:
         else:
             token = ""
         if path == "/api/health" and method == "GET":
-            return 200, {"ok": True}
+            return 200, {"ok": True, "demo": self.service.demo}
         try:
+            bits = [part for part in path.split("/") if part]
+            # A task capability is deliberately NOT an ordinary actor token.
+            # The only routes that accept it are these two exact endpoints.
+            if len(bits) == 4 and bits[:2] == ["api", "delegated"]:
+                if bits[3] == "context" and method == "GET":
+                    return 200, self.service.delegated_context(bits[2], token)
+                if bits[3] == "proposal" and method == "POST":
+                    from server.service import ServiceError
+                    try:
+                        data = json.loads(body.decode() or "{}")
+                    except (ValueError, UnicodeError):
+                        raise ServiceError(400, "Invalid delegated proposal JSON.")
+                    if not isinstance(data, dict) or set(data) != {"after", "rationale", "evidence_ids"}:
+                        raise ServiceError(400, "Only after, rationale and evidence_ids are allowed.")
+                    return 200, self.service.delegated_proposal(bits[2], token, data["after"], data["rationale"], data["evidence_ids"])
+                raise self._missing()
             if path.startswith("/api/"):
+                if token.startswith("pc-task-"):
+                    from server.service import ServiceError
+                    raise ServiceError(401, "A delegated credential is restricted to its task.")
                 actor = self.service.actor_by_token(token)
+                if actor["revoked"]:
+                    from server.service import ServiceError
+                    raise ServiceError(403, "This actor is revoked.")
                 return 200, self.route(method, path, query, headers, body, actor)
             if method == "GET":
                 return self.static(path)
             return 405, {"error": "Method not allowed."}
         except Exception as error:
             status = getattr(error, "status", None) or 500
-            if status == 500 and not getattr(error, "status", None):
-                return 500, {"error": "The request failed. " + str(error)}
+            if status == 500:
+                return 500, {"error": "The request failed. Contact the local operator."}
             return status, {"error": str(error)}
 
     def route(self, method, path, query, headers, body, actor):
         content = headers.get("content-type", "")
-        data = json.loads(body.decode() or "{}") if body and "json" in content else {}
+        try:
+            data = json.loads(body.decode() or "{}") if body and "json" in content else {}
+        except (ValueError, UnicodeError):
+            from server.service import ServiceError
+            raise ServiceError(400, "Invalid JSON request.") from None
+        if not isinstance(data, dict):
+            from server.service import ServiceError
+            raise ServiceError(400, "Expected a JSON object.")
         bits = [part for part in path.split("/") if part]
         # /api/...
         if bits[:2] == ["api", "me"] and method == "GET":
-            return {"id": actor["id"], "name": actor["name"], "kind": actor["kind"], "workspace_role": actor["workspace_role"]}
+            return {"id": actor["id"], "name": actor["name"], "kind": actor["kind"], "workspace_role": actor["workspace_role"],
+                    "experimental_crdt": self.service.crdt and (ROOT / "experiments/crdt/browser.bundle.js").is_file(),
+                    "experimental_live": self.service.crdt, "local_pdf_preview": self.preview.enabled}
         if bits[:2] == ["api", "projects"] and len(bits) == 2 and method == "GET":
             return self.service.projects(actor)
         if bits[:2] == ["api", "projects"] and len(bits) == 2 and method == "POST":
@@ -52,10 +87,53 @@ class Api:
             return self.service.import_example(actor, bits[2])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "import" and method == "POST":
             return self.service.import_zip(actor, bits[2], body)
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "presence" and method == "POST":
+            return self.live.update(actor, bits[2], data)
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "revision" and method == "GET":
+            return self.service.manuscript_revision(actor, bits[2])
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "blocks" and bits[5] == "crdt":
+            if method == "GET":
+                return self.service.crdt_state(actor, bits[2], bits[4])
+            if method == "POST":
+                return self.service.crdt_update(actor, bits[2], bits[4], data.get("version"), data.get("epoch"), data.get("update"))
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "blocks" and bits[5] == "structure" and method == "POST":
+            return self.service.structural_edit(actor, bits[2], bits[4], data.get("revision"), data.get("version"), data.get("action"), data.get("options"))
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "blocks" and bits[5] == "edit" and method == "POST":
+            return self.service.direct_edit(actor, bits[2], bits[4], data.get("version"), data.get("before"), data.get("after"), data.get("mode"))
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "catalogue-upgrade" and method == "POST":
+            if set(data) not in ({"path"},{"path","fingerprint"}) or ("fingerprint" in data and data["fingerprint"] is None):
+                from server.service import ServiceError
+                raise ServiceError(400,"Provide a file path and optional preview fingerprint.")
+            return self.service.upgrade_catalogue(actor,bits[2],data["path"],data.get("fingerprint"))
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "file" and method == "GET":
             return self.service.file_text(actor, bits[2], query["path"])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "export" and method == "GET":
             return {"zip_b64": __import__("base64").b64encode(self.service.export_zip(actor, bits[2])).decode()}
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "experiments" and method == "POST":
+            return self.service.create_experiment(actor, bits[2], data)
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "experiments":
+            if bits[5] == "bundle" and method == "GET":
+                return self.service.experiment_bundle(actor, bits[2], bits[4])
+            if bits[5] == "receipt" and method == "POST":
+                return self.service.submit_experiment(actor, bits[2], bits[4], data)
+            if bits[5] == "review" and method == "POST":
+                return self.service.review_experiment(actor, bits[2], bits[4], data.get("outcome"), data.get("assessment"))
+            if bits[5] == "output-links" and method == "POST":
+                return self.service.link_experiment_output(actor,bits[2],bits[4],data.get("output_name"),data.get("block_id"),data.get("version"))
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "workflows" and method == "POST":
+            return self.service.create_workflow(actor, bits[2], data.get("title"), data.get("objective"))
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "workflows" and bits[5] == "steps" and method == "POST":
+            return self.service.add_workflow_step(actor, bits[2], bits[4], data)
+        if len(bits) == 8 and bits[:2] == ["api", "projects"] and bits[3] == "workflows" and bits[5] == "steps" and method == "POST":
+            if bits[7] == "launch":
+                return self.service.launch_workflow_step(actor, bits[2], bits[4], bits[6])
+            if bits[7] == "evaluate":
+                return self.service.evaluate_workflow_step(actor, bits[2], bits[4], bits[6], data.get("attempt_id"), data.get("outcome"), data.get("assessment"))
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "agent-tasks" and method == "POST":
+            return self.service.create_agent_task(actor, bits[2], data.get("block_id"), data.get("assignee_id"),
+                                                  data.get("instructions"), data.get("context_ids", []))
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "agent-tasks" and bits[5] == "cancel" and method == "POST":
+            return self.service.cancel_agent_task(actor, bits[2], bits[4])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "suggestions" and method == "POST":
             return self.service.propose(actor, bits[2], data["block_id"], data["base_revision"], data["before"], data["after"], data["mode"], data.get("evidence_ids"))
         if len(bits) == 6 and bits[3] == "suggestions" and bits[5] == "accept" and method == "POST":
@@ -113,6 +191,10 @@ class Api:
             return self.service.restore(actor, raw)
         if bits[:3] == ["api", "admin", "purge"] and method == "POST":
             return self.service.purge(actor)
+        if bits == ["api", "admin", "actors"] and method == "GET":
+            return self.service.list_accounts(actor)
+        if len(bits) == 5 and bits[:3] == ["api", "admin", "actors"] and bits[4] == "rotate" and method == "POST":
+            return self.service.rotate_actor(actor,bits[3])
         if bits[:3] == ["api", "admin", "actors"] and method == "POST" and len(bits) == 3:
             created = self.service.create_actor(actor, data.get("name") or "", data.get("kind") or "human")
             return created
@@ -127,6 +209,12 @@ class Api:
         return ServiceError(404, "Unknown API route.")
 
     def static(self, path):
+        if path in {"/experimental/crdt-browser.js", "/experimental/crdt-NOTICES.txt"}:
+            name = "browser.bundle.js" if path.endswith(".js") else "browser-NOTICES.txt"
+            candidate = ROOT / "experiments" / "crdt" / name
+            if not self.service.crdt or not candidate.is_file():
+                return 404, {"error": "Experimental browser collaboration is unavailable."}
+            return 200, {"file": str(candidate), "type": "text/javascript; charset=utf-8" if path.endswith(".js") else "text/plain; charset=utf-8"}
         relative = "project.html" if path in {"/", ""} else path.lstrip("/")
         candidate = (WEB / relative).resolve()
         if WEB.resolve() not in candidate.parents and candidate != WEB.resolve():
