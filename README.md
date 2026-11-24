@@ -62,7 +62,7 @@ python3 tests/browser_smoke.py
 python3 tests/editor_browser.py --output-zip build/editor-edited.zip
 ~~~
 
-The [pilot plan](docs/pilot.md) contains the interview guide, the two-minute friction log and the criteria for building the collaborative editor. The [manuscript corpus](corpus/README.md) records versioned source candidates and the first published-source inspection.
+The [pilot plan](docs/pilot.md) contains the interview guide, the two-minute friction log and the criteria for building the collaborative editor. The [manuscript corpus](corpus/README.md) records versioned source candidates, the first published-source inspection, and each paper's visually editable paragraph and heading counts.
 
 ### Open-source components
 

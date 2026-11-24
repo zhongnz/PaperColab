@@ -34,8 +34,12 @@
     } };
   }
 
-  function asRich(nodes, slice, depth = 0) {
-    if (depth > 12) return null;
+  function asRich(nodes, slice, depth = 0, failures = null) {
+    const fail = command => {
+      if (failures && command) failures.push(command);
+      return null;
+    };
+    if (depth > 12) return fail('nesting');
     const result = [];
     function append(item) {
       const previous = result.at(-1);
@@ -48,7 +52,7 @@
       if (node.type === 'whitespace') { append({ type: 'text', text: ' ' }); continue; }
       if (node.type === 'string') {
         const text = raw(node);
-        if (/[\\{}$%&#_^\x00-\x1f]/.test(text)) return null;
+        if (/[\\{}$%&#_^\x00-\x1f]/.test(text)) return fail('special character');
         if (text) append({ type: 'text', text: text.replace(/~/g, '\u00a0') });
         continue;
       }
@@ -56,27 +60,27 @@
         append({ type: 'texToken', attrs: { latex: raw(node) } });
         continue;
       }
-      if (node.type !== 'macro') return null;
+      if (node.type !== 'macro') return fail(node.type);
       const name = node.content;
       if (name.length === 1 && '#$%&_{}'.includes(name) && raw(node) === '\\' + name) {
         append({ type: 'text', text: name }); continue;
       }
-      if (next?.type !== 'group' || node.position.end.offset !== next.position.start.offset) return null;
+      if (next?.type !== 'group' || node.position.end.offset !== next.position.start.offset) return fail(name);
       if (Object.hasOwn(namedEscapes, name) && !next.content.length) {
         append({ type: 'text', text: namedEscapes[name] });
       } else if (Object.hasOwn(marks, name)) {
-        const children = asRich(next.content, slice, depth + 1);
-        if (!children?.length) return null;
+        const children = asRich(next.content, slice, depth + 1, failures);
+        if (!children?.length) return failures?.length ? null : fail(name);
         for (const child of children) {
           const existing = child.marks ?? [];
-          if (existing.some(mark => mark.type === marks[name])) return null;
+          if (existing.some(mark => mark.type === marks[name])) return fail(name);
           const mark = name === 'textit' ? { type: 'italic', attrs: { command: 'textit' } } : { type: marks[name] };
           child.marks = [...existing, mark].sort((a, b) => a.type.localeCompare(b.type));
           append(child);
         }
       } else if (inlineRefs.has(name) && /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(raw(next))) {
         append({ type: 'texToken', attrs: { latex: slice(node.position.start.offset, next.position.end.offset) } });
-      } else return null;
+      } else return fail(name);
       i++;
     }
     return result;
@@ -132,6 +136,11 @@
     const nodes = env ? env.content : ast.content;
     if (nodes.some(ambiguous)) return rawFile('A conditional or unmatched delimiter makes the block boundaries uncertain.');
     const start = n => at(n.position.start.offset), end = n => at(n.position.end.offset);
+    function represent(nodes) {
+      const commands = [];
+      const rich = asRich(nodes, slice, 0, commands);
+      return { rich, commands: [...new Set(commands)] };
+    }
     if (env) add('raw', 0, nodes.length ? start(nodes[0]) : end(env), { label: 'Document opening' });
     let run = [];
     function flush() {
@@ -142,9 +151,9 @@
       run = [];
       if (!group.length) return;
       const from = start(group[0]), to = end(group.at(-1));
-      const rich = asRich(group, slice);
+      const { rich, commands } = represent(group);
       if (rich?.length) add('paragraph', from, to, { rich: doc(rich), prefix: '', suffix: '' });
-      else add('raw', from, to, { label: 'LaTeX source' });
+      else add('raw', from, to, { label: 'LaTeX source', fallback: 'paragraph', commands });
     }
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i];
@@ -170,10 +179,10 @@
         const title = nodes[j];
         if (title?.type === 'group') {
           flush();
-          const rich = asRich(title.content, slice);
+          const { rich, commands } = represent(title.content);
           if (rich) add('heading', start(n), end(title), { rich: doc(rich),
             prefix: original.slice(start(n), start(title) + 1), suffix: '}', label: n.content });
-          else add('raw', start(n), end(title), { label: 'LaTeX heading' });
+          else add('raw', start(n), end(title), { label: 'LaTeX heading', fallback: 'heading', commands });
           i = j;
           continue;
         }
@@ -227,5 +236,24 @@
     parts.push(file.original.slice(cursor));
     return parts.join('');
   }
-  globalThis.PaperColabBlocks = { parseFile, current, rich, editVisual, editSource, exportText, preview, tokens };
+
+  function coverage(file) {
+    const report = {
+      editableParagraphs: 0, editableHeadings: 0, fallbackParagraphs: 0, fallbackHeadings: 0, preservedBlocks: 0
+    };
+    const commands = new Map();
+    for (const block of file.blocks) {
+      if (block.kind === 'paragraph') report.editableParagraphs++;
+      else if (block.kind === 'heading') report.editableHeadings++;
+      else if (block.fallback === 'paragraph') report.fallbackParagraphs++;
+      else if (block.fallback === 'heading') report.fallbackHeadings++;
+      else report.preservedBlocks++;
+      for (const command of block.commands ?? []) commands.set(command, (commands.get(command) ?? 0) + 1);
+    }
+    report.editableBlocks = report.editableParagraphs + report.editableHeadings;
+    report.fallbackCommands = [...commands].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+      .map(([command, blocks]) => ({ command, blocks }));
+    return report;
+  }
+  globalThis.PaperColabBlocks = { parseFile, current, rich, editVisual, editSource, exportText, preview, tokens, coverage };
 })();

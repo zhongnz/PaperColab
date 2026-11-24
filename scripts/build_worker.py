@@ -3,7 +3,6 @@ import io
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -17,6 +16,23 @@ ENGINES = {"pdflatex": "-pdf", "xelatex": "-pdfxe", "lualatex": "-pdflua"}
 def valid_path(name):
     return (len(name) <= 1024 and not re.search(r"[\\:\x00-\x1f\x7f]", name)
             and all(part not in {"", ".", ".."} for part in name.split("/")))
+
+
+def copy_bounded(source, target, declared):
+    """Copy at most the declared byte count, then reject any further output."""
+    if not isinstance(declared, int) or declared < 0:
+        raise ValueError("Expanded data exceeds the declared size.")
+    remaining = declared
+    while remaining:
+        chunk = source.read(min(64 * 1024, remaining))
+        if not chunk:
+            break
+        if len(chunk) > remaining:
+            raise ValueError("Expanded data exceeds the declared size.")
+        target.write(chunk)
+        remaining -= len(chunk)
+    if source.read(1):
+        raise ValueError("Expanded data exceeds the declared size.")
 
 
 def unpack(data, directory):
@@ -46,9 +62,17 @@ def unpack(data, directory):
                 path.mkdir(parents=True, exist_ok=True)
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(entry) as source, path.open("xb") as target:
-                shutil.copyfileobj(source, target, 64 * 1024)
-            if path.stat().st_size != entry.file_size:
+            try:
+                with archive.open(entry) as source, path.open("xb") as target:
+                    copy_bounded(source, target, entry.file_size)
+            except zipfile.BadZipFile as error:
+                path.unlink(missing_ok=True)
+                raise ValueError("Could not verify " + name + ". (" + str(error) + ")") from None
+            except ValueError:
+                path.unlink(missing_ok=True)
+                raise
+            if not path.is_file() or path.stat().st_size != entry.file_size:
+                path.unlink(missing_ok=True)
                 raise ValueError("Incomplete ZIP entry.")
 
 

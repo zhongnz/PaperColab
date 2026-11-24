@@ -24,6 +24,7 @@ async function run(input, root, output) {
   const source = (await PaperColabArchive.readArchive(archive)).get(root)?.text;
   assert.equal(typeof source, 'string', 'Root must be readable UTF-8.');
   const original = B.parseFile(source, {root:true});
+  const report = B.coverage(original);
   const paragraph = original.blocks.find(b => b.kind === 'paragraph');
   assert.ok(paragraph, 'Expected an editable paragraph.');
   const unchanged = await PaperColabArchive.exportArchive(archive, new Map());
@@ -47,7 +48,11 @@ async function run(input, root, output) {
   const raw = f => f.blocks.filter(b=>b.kind==='raw').map(b=>Buffer.from(B.current(f,b)));
   assert.deepEqual(raw(imported),raw(original));
   await fs.writeFile(output,Buffer.from(await outputZip.arrayBuffer()));
+  const commands = report.fallbackCommands.map(item => item.command + ' (' + item.blocks + ')').join(', ');
   console.log(root + ': one paragraph edited, ' + raw(original).length + ' raw blocks preserved, ' +
     (before.size - 1) + ' other files unchanged. Unedited archive is byte-identical.');
+  console.log('Coverage before editing: ' + report.editableParagraphs + ' editable paragraphs, ' +
+    report.editableHeadings + ' editable headings, ' + report.fallbackParagraphs + ' fallback paragraphs, ' +
+    report.fallbackHeadings + ' fallback headings' + (commands ? '; commands ' + commands : '') + '.');
 }
 run(...process.argv.slice(2)).catch(error=>{console.error(error);process.exitCode=1;});

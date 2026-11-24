@@ -127,6 +127,25 @@ test('an untouched ZIP is byte-identical and a changed ZIP preserves paths, sibl
   }
 });
 
+test('coverage counts editable blocks and names the command that preserved a paragraph', () => {
+  const source = [
+    '\\section{Methods}', '', 'Supported prose.', '',
+    'A note\\footnote{detail} stays here.', '',
+    'See \\cite[p.~3]{key}.', '',
+    '\\begin{tabular}{c}', 'a', '\\end{tabular}'
+  ].join('\n');
+  const file = B.parseFile(source);
+  assert.equal(B.exportText(file), source);
+  const report = B.coverage(file);
+  assert.equal(report.editableHeadings, 1);
+  assert.equal(report.editableParagraphs, 1);
+  assert.equal(report.fallbackParagraphs, 2);
+  assert.equal(report.editableBlocks, 2);
+  const commands = Object.fromEntries(report.fallbackCommands.map(item => [item.command, item.blocks]));
+  assert.equal(commands.footnote, 1);
+  assert.equal(commands.cite, 1);
+});
+
 test('editing prose preserves multiline math tokens, textit semantics and raw macro definitions', () => {
   const s = tex`\newcommand\section{word}` + '\r\n\r\n' + tex`A \textit{word} with $a` + '\r\n' + tex`+ b$.`;
   const f = B.parseFile(s);

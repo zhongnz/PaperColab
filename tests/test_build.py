@@ -36,6 +36,35 @@ class ArchiveTests(unittest.TestCase):
                 with self.assertRaises((ValueError, OSError)):
                     build_worker.unpack(data, Path(tmp))
 
+    def test_declared_size_is_written_in_full(self):
+        payload = b"exact bytes\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            build_worker.unpack(archive([("notes.tex", payload)]), Path(tmp))
+            self.assertEqual((Path(tmp) / "notes.tex").read_bytes(), payload)
+
+    def test_copy_stops_at_the_declared_size(self):
+        output = io.BytesIO()
+        with self.assertRaisesRegex(ValueError, "declared size"):
+            build_worker.copy_bounded(io.BytesIO(b"abcdefghij"), output, 4)
+        self.assertEqual(output.getvalue(), b"abcd")
+
+    def test_inflated_member_cannot_exceed_its_declared_size(self):
+        data = b"A" * 20000
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+            zipped.writestr("main.tex", data)
+        blob = bytearray(buffer.getvalue())
+        declared = (10).to_bytes(4, "little")
+        local, central = blob.find(b"PK\x03\x04"), blob.find(b"PK\x01\x02")
+        blob[local + 22:local + 26] = declared
+        blob[central + 24:central + 28] = declared
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(ValueError, "declared size|Could not verify"):
+                build_worker.unpack(bytes(blob), root)
+            written = [path.stat().st_size for path in root.rglob("*") if path.is_file()]
+            self.assertTrue(all(size <= 10 for size in written))
+
     def test_missing_root(self):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(ValueError, "missing"):
             build_worker.build(demo_zip(), "absent.tex", "pdflatex", Path(tmp))
