@@ -187,6 +187,20 @@
         <p class="muted">Visual and source edits wait as the same kind of suggestion. Accepting one leaves an overlapping edit stale instead of merging it.</p>
         <div id="queue" class="queue stack"></div>
       </section>
+      <section class="panel" id="experiment-panel" hidden>
+        <h2>Computational research</h2>
+        <p class="muted">Pin local text code and datasets, download a bundle, run it explicitly in a trusted local Docker environment, and import the receipt for human review. The web server never executes code.</p>
+        <div id="experiment-form" hidden>
+          <label for="experiment-title">Experiment title</label><input id="experiment-title" maxlength="200" style="width:100%">
+          <label for="experiment-objective">Objective</label><textarea id="experiment-objective" rows="3" maxlength="4000" style="width:100%"></textarea>
+          <label for="experiment-language">Language</label><select id="experiment-language"><option value="python">Python</option><option value="r">R</option></select>
+          <label for="experiment-image">Exact local Docker image ID</label><input id="experiment-image" placeholder="sha256:..." style="width:100%">
+          <label for="experiment-code">Code object</label><select id="experiment-code" style="max-width:100%"></select>
+          <label for="experiment-datasets">Text datasets (optional)</label><select id="experiment-datasets" multiple size="4" style="width:100%"></select>
+          <button type="button" id="create-experiment">Register experiment</button>
+        </div>
+        <div id="experiment-list" class="stack"></div>
+      </section>
       <section class="panel">
         <h2>Evidence</h2>
         <div id="library"></div>
@@ -201,6 +215,7 @@
           </select></label>
           <label>Title <input id="object-title"></label>
           <label>External id <input id="object-id" placeholder="optional"></label>
+          <label for="object-body">Local text content (optional)</label><textarea id="object-body" rows="4" style="width:100%"></textarea>
           <button type="button" class="secondary" id="add-object">Add object</button>
         </div>
         <div id="links"></div>

@@ -92,6 +92,15 @@ class Api:
             return self.service.file_text(actor, bits[2], query["path"])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "export" and method == "GET":
             return {"zip_b64": __import__("base64").b64encode(self.service.export_zip(actor, bits[2])).decode()}
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "experiments" and method == "POST":
+            return self.service.create_experiment(actor, bits[2], data)
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "experiments":
+            if bits[5] == "bundle" and method == "GET":
+                return self.service.experiment_bundle(actor, bits[2], bits[4])
+            if bits[5] == "receipt" and method == "POST":
+                return self.service.submit_experiment(actor, bits[2], bits[4], data)
+            if bits[5] == "review" and method == "POST":
+                return self.service.review_experiment(actor, bits[2], bits[4], data.get("outcome"), data.get("assessment"))
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "workflows" and method == "POST":
             return self.service.create_workflow(actor, bits[2], data.get("title"), data.get("objective"))
         if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "workflows" and bits[5] == "steps" and method == "POST":

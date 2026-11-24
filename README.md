@@ -127,3 +127,5 @@ The hosted workspace now has a lead-only delegation form and a restricted, expir
 Optional model adapters and a standard local MCP stdio bridge are documented in [agent integrations](docs/agent-integrations.md). Draft generation and proposal submission are separate actions; remote context disclosure requires explicit opt-in.
 
 Persistent research workflow plans now coordinate individually delegated cells with dependencies, attempt history and explicit human evaluation. See [workflow coordination](docs/research-workflows.md). No automatic scheduling or model execution.
+
+Computational research now has a pinned experiment registry, explicitly invoked local Docker runner for Python/R, imported receipts and reviewed immutable run evidence. See [computational research](docs/computational-research.md). No code execution in the web server.

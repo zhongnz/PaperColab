@@ -425,6 +425,52 @@ class ProductTests(unittest.TestCase):
         self.service=Service(path)
         self.assertEqual(self.service.project(a["ada"],p)["workflows"][0]["completed"],2)
 
+    def test_experiment_pinned_inputs_reviewed_evidence(self):
+        from compute.contract import validate_bundle
+        import hashlib
+        s,p,a=self.service,self.project,self.actors
+        code=s.add_object(a["ada"],p,"code","Analysis","print(42)")
+        data=s.add_object(a["ada"],p,"dataset","Readings","1,2,3")
+        args={"title":"Fixture analysis","objective":"Check the computation.","language":"python",
+              "image":"sha256:"+"a"*64,"code_id":code["id"],"dataset_ids":[data["id"]]}
+        with self.assertRaises(ServiceError):
+            s.create_experiment(a["quill"],p,args)
+        with self.assertRaises(ServiceError):
+            s.create_experiment(a["ada"],p,{**args,"image":"python:latest"})
+        run=s.create_experiment(a["bao"],p,args)
+        key=run["id"]; bundle=s.experiment_bundle(a["bao"],p,key)
+        self.assertEqual(validate_bundle(bundle)["datasets"][0]["body"],"1,2,3")
+        s.update_object(a["ada"],p,data["id"],"4,5,6")
+        self.assertEqual(s.experiment_bundle(a["bao"],p,key),bundle)
+        log="42\n"
+        receipt={"format":"papercolab-receipt-v1","experiment_id":key,"bundle_sha256":bundle["sha256"],
+                 "image":args["image"],"runner":"docker-local-v1","status":"succeeded","exit_code":0,
+                 "elapsed_ms":10,"log":log,"log_sha256":hashlib.sha256(log.encode()).hexdigest()}
+        for invalid in ({**receipt,"bundle_sha256":"b"*64},{**receipt,"log":"tampered"}):
+            with self.assertRaises(ServiceError):
+                s.submit_experiment(a["bao"],p,key,invalid)
+        with self.assertRaises(ServiceError):
+            s.submit_experiment(a["quill"],p,key,receipt)
+        with self.assertRaises(ServiceError):
+            s.review_experiment(a["iris"],p,key,"accepted","No receipt yet.")
+        self.assertEqual(s.submit_experiment(a["bao"],p,key,receipt)["status"],"review")
+        with self.assertRaises(ServiceError):
+            s.submit_experiment(a["bao"],p,key,receipt)
+        with self.assertRaises(ServiceError):
+            s.review_experiment(a["bao"],p,key,"accepted","Not a reviewer.")
+        reviewed=s.review_experiment(a["iris"],p,key,"accepted","Fixture checked.")
+        evidence=s._row_object(reviewed["evidence_id"])
+        self.assertEqual(evidence["kind"],"run")
+        self.assertEqual(json.loads(evidence["body"])["bundle"],bundle)
+        with self.assertRaises(ServiceError):
+            s.update_object(a["ada"],p,evidence["id"],"Modified")
+        claim=s.add_object(a["ada"],p,"claim","Result","The result was 42.")
+        link=s.link_claim(a["bao"],p,claim["id"],evidence["id"])
+        self.assertEqual(link["evidence_revision"],1)
+        self.assertEqual(s.project(a["quill"],p)["experiments"],[])
+        path=s.path;s.close();self.service=Service(path)
+        self.assertEqual(self.service.project(a["ada"],p)["experiments"][0]["status"],"accepted")
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")

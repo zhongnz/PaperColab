@@ -106,6 +106,12 @@ class Service:
           task_id TEXT NOT NULL UNIQUE, position INTEGER NOT NULL,
           outcome TEXT, assessment TEXT, evaluated_by TEXT, evaluated_at INTEGER,
           UNIQUE(step_id, position));
+        CREATE TABLE IF NOT EXISTS experiments (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+          objective TEXT NOT NULL, bundle TEXT NOT NULL, created_by TEXT NOT NULL,
+          created_at INTEGER NOT NULL, receipt TEXT, submitted_by TEXT,
+          review TEXT, assessment TEXT, reviewed_by TEXT, reviewed_at INTEGER,
+          evidence_id TEXT UNIQUE);
         CREATE TABLE IF NOT EXISTS anchors (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL, block_id TEXT NOT NULL, quote TEXT NOT NULL,
           actor_id TEXT NOT NULL, created_revision INTEGER NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0);
@@ -334,6 +340,7 @@ class Service:
             "comments": comments, "objects": objects, "links": links, "decisions": decisions, "releases": releases,
             "agent_tasks": self._agent_tasks(project_id) if actor["kind"] == "human" else [],
             "workflows": self._workflows(project_id) if actor["kind"] == "human" else [],
+            "experiments": self._experiments(project_id) if actor["kind"] == "human" else [],
             "readiness": {"pending_suggestions": len(pending), "unresolved_anchors": len(unresolved),
                           "open_decisions": len(open_decisions),
                           "ready": not pending and not unresolved and not open_decisions},
@@ -571,6 +578,110 @@ class Service:
                          "before": before, "after": after, "base_version": version})
         return {"revision": revision, "block": next(b for b in self._blocks(project_id, block["path"])
                                                    if b["stableId"] == stable_id)}
+
+    def _experiment_row(self, project_id, experiment_id):
+        row = self.db.execute("SELECT * FROM experiments WHERE project_id=? AND id=?",
+                              (project_id, experiment_id)).fetchone()
+        if not row:
+            raise ServiceError(404, "Unknown experiment.")
+        return row
+
+    def _experiment_view(self, row):
+        bundle = json.loads(row["bundle"])
+        spec = bundle["spec"]
+        receipt = json.loads(row["receipt"]) if row["receipt"] else None
+        return {"id": row["id"], "title": row["title"], "objective": row["objective"],
+                "language": spec["language"], "image": spec["image"], "bundle_sha256": bundle["sha256"],
+                "inputs": [{"id": x["id"], "revision": x["revision"]} for x in [spec["code"], *spec["datasets"]]],
+                "status": row["review"] or ("review" if receipt else "planned"),
+                "execution_status": receipt["status"] if receipt else None,
+                "log": receipt["log"] if receipt else None, "assessment": row["assessment"],
+                "submitted_by": row["submitted_by"], "reviewed_by": row["reviewed_by"], "evidence_id": row["evidence_id"]}
+
+    def _experiments(self, project_id):
+        return [self._experiment_view(row) for row in self._rows(
+            "SELECT * FROM experiments WHERE project_id=? ORDER BY created_at DESC,rowid DESC", (project_id,))]
+
+    def create_experiment(self, actor, project_id, data):
+        from compute.contract import digest, validate_bundle
+        self.require(actor, project_id, "direct")
+        if not isinstance(data, dict) or set(data) != {"title","objective","language","image","code_id","dataset_ids"}:
+            raise ServiceError(400, "Provide title, objective, language, image, code and datasets.")
+        title = self._workflow_text(data["title"], "Experiment title", 200)
+        objective = self._workflow_text(data["objective"], "Experiment objective", 4000)
+        ids = self._workflow_ids(data["dataset_ids"], 8)
+        if not isinstance(data["code_id"], str) or data["code_id"] in ids:
+            raise ServiceError(400, "Choose a code object and distinct datasets.")
+        inputs = []
+        for key, kind in [(data["code_id"], "code"), *((key, "dataset") for key in ids)]:
+            obj = self.db.execute("SELECT * FROM objects WHERE project_id=? AND id=?", (project_id, key)).fetchone()
+            if not obj or obj["kind"] != kind or json.loads(obj["external"] or "{}"):
+                raise ServiceError(400, "Choose locally held text code and dataset objects in this project.")
+            inputs.append({"id": key, "revision": obj["revision"], "body": obj["body"]})
+        key = str(uuid.uuid4())
+        spec = {"format":"papercolab-experiment-v1","id":key,"language":data["language"],"image":data["image"],
+                "code":inputs[0],"datasets":inputs[1:]}
+        try:
+            bundle = {"spec": spec, "sha256": digest(spec)}
+            validate_bundle(bundle)
+        except (ValueError, TypeError, UnicodeError) as error:
+            raise ServiceError(400, str(error)) from None
+        if self.db.execute("SELECT count(*) FROM experiments WHERE project_id=?", (project_id,)).fetchone()[0] >= 50:
+            raise ServiceError(409, "Experiment limit reached.")
+        with self.db:
+            self.db.execute("""INSERT INTO experiments (id,project_id,title,objective,bundle,created_by,created_at)
+                               VALUES (?,?,?,?,?,?,?)""",
+                            (key, project_id, title, objective, json.dumps(bundle), actor["id"], self.now()))
+            self._audit(actor["id"], "plan-experiment", project_id, {"experiment":key,"bundle_sha256":bundle["sha256"]})
+        return self._experiment_view(self._experiment_row(project_id, key))
+
+    def experiment_bundle(self, actor, project_id, experiment_id):
+        self.require(actor, project_id, "direct")
+        return json.loads(self._experiment_row(project_id, experiment_id)["bundle"])
+
+    def submit_experiment(self, actor, project_id, experiment_id, receipt):
+        from compute.contract import validate_receipt
+        self.require(actor, project_id, "direct")
+        row = self._experiment_row(project_id, experiment_id)
+        if row["receipt"] is not None:
+            raise ServiceError(409, "A receipt is already recorded; create another experiment for a rerun.")
+        try:
+            validate_receipt(receipt, json.loads(row["bundle"]))
+        except (ValueError, TypeError, UnicodeError) as error:
+            raise ServiceError(400, str(error)) from None
+        with self.db:
+            self.db.execute("UPDATE experiments SET receipt=?,submitted_by=? WHERE id=?",
+                            (json.dumps(receipt), actor["id"], experiment_id))
+            self._audit(actor["id"], "submit-experiment", project_id,
+                        {"experiment":experiment_id,"status":receipt["status"],"log_sha256":receipt["log_sha256"]})
+        return self._experiment_view(self._experiment_row(project_id, experiment_id))
+
+    def review_experiment(self, actor, project_id, experiment_id, outcome, assessment):
+        self.require(actor, project_id, "decide")
+        row = self._experiment_row(project_id, experiment_id)
+        if not row["receipt"] or row["review"]:
+            raise ServiceError(409, "Only a submitted, undecided receipt can be reviewed.")
+        if outcome not in ("accepted","rejected"):
+            raise ServiceError(400, "Choose accepted or rejected.")
+        assessment = self._workflow_text(assessment, "Review assessment", 4000)
+        receipt = json.loads(row["receipt"])
+        if outcome == "accepted" and receipt["status"] != "succeeded":
+            raise ServiceError(409, "Only a successful execution receipt can become run evidence.")
+        evidence = None
+        with self.db:
+            if outcome == "accepted":
+                # Store immutable run evidence, with pinned inputs and full
+                # receipt, not a mutable reference to the latest dataset.
+                evidence = self._add_object(actor, project_id, "run", row["title"],
+                    json.dumps({"experiment":experiment_id,"objective":row["objective"],
+                        "bundle":json.loads(row["bundle"]),"receipt":receipt,
+                        "assessment":assessment,"assurance":"human-reviewed, user-supplied receipt; not independently attested"}),
+                    actor["id"], {})
+            self.db.execute("""UPDATE experiments SET review=?,assessment=?,reviewed_by=?,reviewed_at=?,evidence_id=?
+                               WHERE id=?""", (outcome,assessment,actor["id"],self.now(),evidence,experiment_id))
+            self._audit(actor["id"], "review-experiment", project_id,
+                        {"experiment":experiment_id,"outcome":outcome,"evidence":evidence})
+        return self._experiment_view(self._experiment_row(project_id, experiment_id))
 
     def _workflow_row(self, project_id, workflow_id):
         row = self.db.execute("SELECT * FROM research_workflows WHERE project_id=? AND id=?",
@@ -1172,6 +1283,8 @@ class Service:
         row = self.db.execute("SELECT * FROM objects WHERE id = ? AND project_id = ?", (object_id, project_id)).fetchone()
         if not row:
             raise ServiceError(404, "Unknown object.")
+        if self.db.execute("SELECT 1 FROM experiments WHERE evidence_id=?", (object_id,)).fetchone():
+            raise ServiceError(409, "Reviewed experiment evidence is immutable; register another experiment.")
         revision = row["revision"] + 1
         self.db.execute("UPDATE objects SET body = ?, revision = ? WHERE id = ?", (body, revision, object_id))
         self.db.execute("INSERT INTO object_versions (object_id, revision, title, body, external) VALUES (?, ?, ?, ?, ?)",
@@ -1367,7 +1480,7 @@ class Service:
         return {"removed": removed}
 
     def _delete_project(self, project_id):
-        for table in ("members", "blocks", "files", "suggestions", "anchors", "comments", "links", "decisions", "crdt_cells", "agent_tasks", "workflow_attempts", "workflow_steps", "research_workflows"):
+        for table in ("members", "blocks", "files", "suggestions", "anchors", "comments", "links", "decisions", "crdt_cells", "agent_tasks", "workflow_attempts", "workflow_steps", "research_workflows", "experiments"):
             self.db.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
         self.db.execute("DELETE FROM object_versions WHERE object_id IN (SELECT id FROM objects WHERE project_id = ?)", (project_id,))
         self.db.execute("DELETE FROM objects WHERE project_id = ?", (project_id,))

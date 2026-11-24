@@ -237,6 +237,7 @@
     $('create-agent-task').disabled=value||!$('delegate-cell').options.length||!$('delegate-assistant').options.length;
     $('refresh-agent-tasks').disabled=value;
     $('workflow-panel').inert=value;
+    $('experiment-panel').inert=value;
     $('durable-drafts').disabled=value||dirty;
     $('local-recovery').inert=value;
     updateTransportControl();
@@ -311,6 +312,7 @@
     if(live&&live.project!==id)stopLive();
     if(detail?.id!==id){
       $('delegate-instructions').value='';
+      for(const key of ['experiment-title','experiment-objective','experiment-image','object-body'])$(key).value='';
       for(const key of ['workflow-title','workflow-objective','workflow-step-title','workflow-instructions','workflow-criteria'])$(key).value='';
       $('delegated-token').value='';$('delegated-credential').hidden=true;
       for(const option of $('delegate-context').options)option.selected=false;
@@ -343,6 +345,7 @@
     renderAgentTasks();
     renderWorkflows();
     renderLibrary();
+    renderExperiments();
     renderDecisions();
     renderReleases();
     if (select.value) await showFile(select.value);
@@ -529,6 +532,72 @@
     }
   }
 
+  function renderExperiments(){
+    const host=$('experiment-list');
+    $('experiment-panel').hidden=me.kind!=='human';
+    $('experiment-form').hidden=!directAllowed();
+    host.replaceChildren();
+    for(const [id,kind] of [['experiment-code','code'],['experiment-datasets','dataset']]){
+      const select=$(id),prior=[...select.selectedOptions].map(o=>o.value);
+      select.replaceChildren();
+      for(const obj of detail.objects.filter(o=>o.kind===kind&&!Object.keys(o.external).length))
+        select.append(new Option(obj.title+' · v'+obj.revision,obj.id));
+      if(prior.length)for(const option of select.options)option.selected=prior.includes(option.value);
+    }
+    for(const experiment of detail.experiments??[]){
+      const row=document.createElement('article');row.className='experiment-record';
+      const heading=document.createElement('strong'),info=document.createElement('p'),hash=document.createElement('p');
+      heading.textContent=experiment.title+' · '+experiment.status;
+      info.textContent=experiment.language+' · '+experiment.inputs.length+' pinned inputs'+(experiment.execution_status?' · '+experiment.execution_status:'');
+      hash.textContent='Bundle SHA-256: '+experiment.bundle_sha256;hash.style.overflowWrap='anywhere';
+      row.append(heading,info,hash);
+      const endpoint='/api/projects/'+detail.id+'/experiments/'+experiment.id;
+      const add=(name,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=name;b.onclick=()=>act(fn);row.append(b);};
+      if(directAllowed()){
+        add('Download experiment bundle',async()=>{
+          const bundle=await api('GET',endpoint+'/bundle');
+          download(JSON.stringify(bundle,null,2),'experiment-'+experiment.id+'.json','application/json');
+        });
+        if(experiment.status==='planned'){
+          const input=document.createElement('input');input.type='file';input.accept='.json,application/json';
+          input.setAttribute('aria-label','Runner receipt for '+experiment.title);row.append(input);
+          add('Import runner receipt',async()=>{
+            const file=input.files[0];
+            if(!file||file.size>1024*1024)throw Error('Choose a bounded JSON runner receipt.');
+            await api('POST',endpoint+'/receipt',JSON.parse(await file.text()));
+            await openProject(detail.id);say('Receipt recorded; human review required.');
+          });
+        }
+      }
+      if(experiment.log!==null){
+        const pre=document.createElement('pre');pre.textContent=experiment.log;pre.style.whiteSpace='pre-wrap';pre.style.maxHeight='240px';pre.style.overflow='auto';row.append(pre);
+      }
+      if(experiment.status==='review'&&canDecide()){
+        const assessment=document.createElement('textarea');assessment.rows=3;assessment.maxLength=4000;
+        assessment.setAttribute('aria-label','Experiment assessment for '+experiment.title);row.append(assessment);
+        if(experiment.execution_status==='succeeded')add('Accept as run evidence',async()=>{
+          if(!window.confirm('Accept this user-supplied receipt as reviewed evidence? It is not independently attested.'))return;
+          await api('POST',endpoint+'/review',{outcome:'accepted',assessment:assessment.value});
+          await openProject(detail.id);say('Run evidence registered.');
+        });
+        add('Reject receipt',async()=>{
+          await api('POST',endpoint+'/review',{outcome:'rejected',assessment:assessment.value});
+          await openProject(detail.id);say('Receipt rejected.');
+        });
+      }
+      if(experiment.assessment){const assessment=document.createElement('p');assessment.textContent='Review: '+experiment.assessment;row.append(assessment);}
+      host.append(row);
+    }
+    if(!host.children.length)host.textContent='No registered experiments.';
+  }
+  $('create-experiment').onclick=()=>act(async()=>{
+    await api('POST','/api/projects/'+detail.id+'/experiments',{
+      title:$('experiment-title').value,objective:$('experiment-objective').value,
+      language:$('experiment-language').value,image:$('experiment-image').value.trim(),code_id:$('experiment-code').value,
+      dataset_ids:[...$('experiment-datasets').selectedOptions].map(o=>o.value)
+    });
+    await openProject(detail.id);$('experiment-title').value=$('experiment-objective').value='';say('Experiment registered with immutable inputs.');
+  });
   function renderLibrary() {
     const library = $('library');
     library.replaceChildren();
@@ -925,6 +994,7 @@
       stopLive();$('live-enabled').checked=false;
       closeRecovery();$('durable-drafts').checked=false;storageMessage('');storageFailed=false;
       $('delegated-token').value='';$('delegated-credential').hidden=true;$('delegate-instructions').value='';
+      for(const key of ['experiment-title','experiment-objective','experiment-image','object-body'])$(key).value='';
       for(const key of ['workflow-title','workflow-objective','workflow-step-title','workflow-instructions','workflow-criteria'])$(key).value='';
       destroyEditors(); detail=null; selected=null; fileText='';
       $('crdt-enabled').checked=false;updateTransportControl();
@@ -1005,7 +1075,8 @@
   $('add-object').onclick = () => act(async () => {
     const identifier = $('object-id').value.trim();
     const external = identifier ? { system: 'external', identifier, version: '1', access: 'as recorded', holding: 'reference' } : null;
-    await api('POST', '/api/projects/' + detail.id + '/objects', { kind: $('object-kind').value, title: $('object-title').value, body: '', external });
+    await api('POST', '/api/projects/' + detail.id + '/objects', { kind: $('object-kind').value, title: $('object-title').value, body: $('object-body').value, external });
+    $('object-body').value='';
     await openProject(detail.id);
   });
   $('add-decision').onclick = () => act(() => api('POST', '/api/projects/' + detail.id + '/decisions', { text: $('decision').value }).then(() => openProject(detail.id)));
