@@ -364,6 +364,11 @@
     $('review-count').textContent=ready.pending_suggestions?'('+ready.pending_suggestions+')':'';
     $('release').hidden=role()!=='lead'||me.kind!=='human';
     $('membership-form').hidden=role()!=='lead'||me.kind!=='human';
+    $('catalogue-upgrade').hidden=$('membership-form').hidden;
+    const upgrade=$('upgrade-file'), priorUpgrade=upgrade.value;
+    upgrade.replaceChildren(...detail.files.filter(f=>/\.(tex|ltx)$/i.test(f.path)).map(f=>new Option(f.path,f.path)));
+    if([...upgrade.options].some(o=>o.value===priorUpgrade))upgrade.value=priorUpgrade;
+    clearUpgrade();
     $('readiness').textContent = ready.ready ? 'Ready for release.' :
       ready.pending_suggestions + ' pending suggestions, ' + ready.unresolved_anchors + ' unresolved anchors, ' + ready.open_decisions + ' open decisions.';
     const members = $('members');
@@ -1117,7 +1122,7 @@
       $('cost-out').hidden=true;
       $('project-list').replaceChildren();$('search-results').replaceChildren();
       $('project-create-tools').hidden=$('project-search-tools').hidden=$('provision-panel').hidden=true;
-      clearProvision();$('account-list').replaceChildren();me=null;projects=[];
+      clearProvision();$('account-list').replaceChildren();$('upgrade-file').replaceChildren();clearUpgrade();me=null;projects=[];
       $('who').textContent='Signed out';
       $('welcome-message').textContent='Sign in with your local access token to get started.';
       token=next;$('token').value='';$('actor').value=token;
@@ -1170,6 +1175,31 @@
   $('list-accounts').onclick=()=>act(showAccounts);
   $('show-provision-token').onchange=()=>{$('provision-token').type=$('show-provision-token').checked?'text':'password';};
   $('hide-provision').onclick=clearProvision;
+  let upgradePreview=null;
+  function clearUpgrade(){
+    upgradePreview=null;$('upgrade-result').textContent='';$('apply-upgrade').hidden=true;
+    $('preview-upgrade').disabled=!$('upgrade-file').options.length;
+  }
+  $('upgrade-file').onchange=clearUpgrade;
+  $('preview-upgrade').onclick=()=>act(async()=>{
+    clearUpgrade();
+    const result=await api('POST','/api/projects/'+detail.id+'/catalogue-upgrade',{path:$('upgrade-file').value});
+    if(result.status==='blocked'){
+      $('upgrade-result').textContent=result.message+' '+result.unmatched_old+' old / '+result.unmatched_new+' new unmatched ranges.';
+      return;
+    }
+    $('upgrade-result').textContent=result.preserved_ids+' IDs preserved; '+result.changes.length+' changed cell descriptions. '+
+      result.changes.map(c=>c.stableId.slice(0,8)+': '+c.before.kind+' → '+c.after.kind).join('; ');
+    if(result.status==='ready'){
+      upgradePreview={path:result.path,fingerprint:result.fingerprint};$('apply-upgrade').hidden=false;
+    }
+  });
+  $('apply-upgrade').onclick=()=>act(async()=>{
+    if(!upgradePreview)return;
+    if(!window.confirm('Apply this exact-range catalogue upgrade? Affected pending edits and checkpoints will be invalidated.'))return;
+    const result=await api('POST','/api/projects/'+detail.id+'/catalogue-upgrade',upgradePreview);
+    await openProject(detail.id);say('Catalogue upgraded: '+result.changes.length+' changed descriptions; source unchanged.');
+  });
   $('add-member').onclick=()=>act(async()=>{
     const id=$('member-id').value.trim();
     if(!id||id===me.id)throw Error('Enter another local account ID.');

@@ -532,6 +532,75 @@ class Service:
             raise ServiceError(404, "Unknown block.")
         return row
 
+    def upgrade_catalogue(self, actor, project_id, path, expected=None):
+        """Preview or apply an exact-range, metadata-only parser upgrade.
+
+        No document bytes, cell IDs, ownership or historical records are
+        changed by a preview. Refuse all split/merge/added/removed ranges.
+        """
+        self.require(actor, project_id, "members")
+        if not isinstance(path,str) or Path(path).suffix.lower() not in {".tex",".ltx"}:
+            raise ServiceError(400,"Choose a TeX manuscript file.")
+        if expected is not None and (not isinstance(expected,str) or not re.fullmatch(r"[a-f0-9]{64}",expected)):
+            raise ServiceError(400,"Provide the exact preview fingerprint.")
+        row=self.db.execute("SELECT current,is_root,is_text FROM files WHERE project_id=? AND path=?",
+                            (project_id,path)).fetchone()
+        if not row or not row["is_text"]:
+            raise ServiceError(404,"Unknown text manuscript.")
+        previous=self._blocks(project_id,path)
+        result=self._node({"op":"catalogue","text":row["current"],"root":bool(row["is_root"]),"previous":[]})
+        if not result.get("ok"):
+            raise ServiceError(409,"The current parser could not catalogue this file.")
+        revision=self.manuscript_revision(actor,project_id)["revision"]
+        old={(b["from"],b["to"],b["quote"]):b for b in previous}
+        fresh={(b["from"],b["to"],b["quote"]):b for b in result["blocks"]}
+        if len(old)!=len(previous) or len(fresh)!=len(result["blocks"]) or old.keys()!=fresh.keys():
+            if expected is not None:
+                raise ServiceError(409,"Catalogue boundaries changed. Explicit identity migration is required.")
+            return {"status":"blocked","path":path,"revision":revision,
+                    "old_count":len(previous),"new_count":len(result["blocks"]),
+                    "unmatched_old":len(old.keys()-fresh.keys()),"unmatched_new":len(fresh.keys()-old.keys()),
+                    "message":"Split, merged or unmatched ranges require explicit identity migration."}
+        fields=("kind","rich","label","fallback","commands")
+        planned=[]
+        changes=[]
+        for key in sorted(old):
+            before,after=old[key],fresh[key]
+            after={**after,"stableId":before["stableId"]}
+            planned.append(after)
+            if any(before.get(k)!=after.get(k) for k in fields):
+                changes.append({"stableId":before["stableId"],"before":{k:before.get(k) for k in fields},
+                                "after":{k:after.get(k) for k in fields}})
+        fingerprint=hashlib.sha256(json.dumps({"path":path,"project":project_id,"revision":revision,
+            "source":row["current"],"before":previous,"planned":planned},sort_keys=True,
+            separators=(",",":")).encode("utf-8")).hexdigest()
+        preview={"status":"ready" if changes else "unchanged","path":path,"revision":revision,
+                 "fingerprint":fingerprint,"preserved_ids":len(previous),"changes":changes}
+        if expected is None:
+            return preview
+        if expected!=fingerprint:
+            raise ServiceError(409,"Catalogue preview changed. Generate a fresh preview.")
+        if not changes:
+            return preview
+        by_id={b["stableId"]:b for b in previous}
+        with self.db:
+            self._replace_blocks(project_id,path,planned)
+            for change in changes:
+                key=change["stableId"]
+                # Even a metadata-only eligibility change invalidates a
+                # previously issued cell-edit checkpoint and pending work.
+                self.db.execute("UPDATE blocks SET version=? WHERE project_id=? AND stable_id=?",
+                                (by_id[key]["version"]+1,project_id,key))
+                self.db.execute("""UPDATE suggestions SET status='stale',result='stale'
+                                   WHERE project_id=? AND block_id=? AND status='pending'""",(project_id,key))
+                self.db.execute("""UPDATE agent_tasks SET status='cancelled',token_hash=''
+                                   WHERE project_id=? AND block_id=? AND status='open'""",(project_id,key))
+                self.db.execute("DELETE FROM crdt_cells WHERE project_id=? AND block_id=?",(project_id,key))
+            next_revision=self._touch(project_id)
+            self._audit(actor["id"],"upgrade-catalogue",project_id,{"path":path,"base_revision":revision,
+                "revision":next_revision,"fingerprint":fingerprint,"changes":changes})
+        return {**preview,"status":"applied","revision":next_revision}
+
     def assign_owner(self, actor, project_id, stable_id, owner_id):
         self.require(actor, project_id, "own")
         self._block_row(project_id, stable_id)

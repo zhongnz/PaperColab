@@ -590,6 +590,49 @@ class ProductTests(unittest.TestCase):
             finally:
                 s.close()
 
+    def test_catalogue_upgrade_preserves_exact_identity_and_source(self):
+        s,p,a=self.service,self.project,self.actors
+        block=paragraph(s,a["bao"],p)
+        key,path=block["stableId"],block["path"]
+        anchor=s.create_anchor(a["iris"],p,key)
+        s.assign_owner(a["ada"],p,key,a["bao"]["id"])
+        released=s.release(a["ada"],p)
+        immutable=s.release_zip(a["ada"],p,released["id"])[1]
+        before=s.file_text(a["ada"],p,path)["text"]
+        # Simulate a legacy parser that left the identical range raw.
+        s.db.execute("UPDATE blocks SET kind='raw',rich=0,fallback='paragraph',commands=? WHERE stable_id=?",
+                     (json.dumps(["legacy"]),key))
+        s.db.commit()
+        initial=s.manuscript_revision(a["ada"],p)["revision"]
+        with self.assertRaises(ServiceError):
+            s.upgrade_catalogue(a["bao"],p,path)
+        preview=s.upgrade_catalogue(a["ada"],p,path)
+        self.assertEqual(preview["status"],"ready")
+        self.assertEqual([c["stableId"] for c in preview["changes"]],[key])
+        self.assertEqual(s.manuscript_revision(a["ada"],p)["revision"],initial)
+        with self.assertRaises(ServiceError):
+            s.upgrade_catalogue(a["ada"],p,path,"0"*64)
+        result=s.upgrade_catalogue(a["ada"],p,path,preview["fingerprint"])
+        self.assertEqual(result["status"],"applied")
+        after=s.file_text(a["ada"],p,path)
+        self.assertEqual(before,after["text"])
+        edited=next(b for b in after["blocks"] if b["stableId"]==key)
+        self.assertTrue(edited["rich"])
+        self.assertEqual(edited["version"],block["version"]+1)
+        self.assertEqual(edited["owner_id"],a["bao"]["id"])
+        self.assertEqual(next(x for x in s.project(a["ada"],p)["anchors"] if x["id"]==anchor["id"])["status"],"exact")
+        self.assertEqual(s.release_zip(a["ada"],p,released["id"])[1],immutable)
+        self.assertEqual(s.upgrade_catalogue(a["ada"],p,path)["status"],"unchanged")
+        with self.assertRaises(ServiceError):
+            s.upgrade_catalogue(a["ada"],p,path,preview["fingerprint"])
+        # Ambiguous old range must not be assigned an approximate ID.
+        s.db.execute("UPDATE blocks SET start=start+1 WHERE stable_id=?",(key,))
+        s.db.commit()
+        blocked=s.upgrade_catalogue(a["ada"],p,path)
+        self.assertEqual(blocked["status"],"blocked")
+        self.assertEqual(blocked["unmatched_old"],1)
+        self.assertEqual(s.file_text(a["ada"],p,path)["text"],before)
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")

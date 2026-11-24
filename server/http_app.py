@@ -98,6 +98,11 @@ class Api:
             return self.service.structural_edit(actor, bits[2], bits[4], data.get("revision"), data.get("version"), data.get("action"), data.get("options"))
         if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "blocks" and bits[5] == "edit" and method == "POST":
             return self.service.direct_edit(actor, bits[2], bits[4], data.get("version"), data.get("before"), data.get("after"), data.get("mode"))
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "catalogue-upgrade" and method == "POST":
+            if set(data) not in ({"path"},{"path","fingerprint"}) or ("fingerprint" in data and data["fingerprint"] is None):
+                from server.service import ServiceError
+                raise ServiceError(400,"Provide a file path and optional preview fingerprint.")
+            return self.service.upgrade_catalogue(actor,bits[2],data["path"],data.get("fingerprint"))
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "file" and method == "GET":
             return self.service.file_text(actor, bits[2], query["path"])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "export" and method == "GET":

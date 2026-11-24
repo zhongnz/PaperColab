@@ -92,6 +92,14 @@
           <label for="member-role">Project role</label><select id="member-role"><option value="author">Author</option><option value="reviewer">Reviewer</option><option value="reader">Reader</option><option value="lead">Lead</option></select>
           <button type="button" id="add-member">Add or update member</button>
         </div>
+        <section id="catalogue-upgrade" hidden>
+          <h3>Parser compatibility</h3>
+          <p class="muted">Preview a metadata upgrade for an existing manuscript file. Exact source ranges retain their identities; ambiguous boundaries require manual migration. Applying changes invalidates affected pending edits and checkpoints.</p>
+          <label for="upgrade-file">Manuscript file</label><select id="upgrade-file"></select>
+          <button type="button" id="preview-upgrade">Preview catalogue upgrade</button>
+          <p id="upgrade-result" role="status"></p>
+          <button type="button" id="apply-upgrade" hidden>Apply reviewed upgrade</button>
+        </section>
         <div id="releases"></div>
         <div class="project-tools">
           <label>Collection <input id="collection-name" value="Active papers"></label>

@@ -86,7 +86,11 @@
       const previous = result.at(-1);
       if (trace && spans) trace.map.set(item,spans);
       if (item.type === 'text' && previous?.type === 'text' && same(item.marks, previous.marks)) {
-        if(trace) trace.map.set(previous,[...(trace.map.get(previous)??[]),...(trace.map.get(item)??[])]);
+        if(trace) {
+          const existing=trace.map.get(previous)??[];
+          for(const span of trace.map.get(item)??[])existing.push(span);
+          trace.map.set(previous,existing);
+        }
         previous.text += item.text;
       } else result.push(item);
     }
@@ -218,7 +222,7 @@
     (n.type === 'macro' && /^(?:begin|end|if.*|else|fi|or|begingroup|endgroup|bgroup|egroup)$/.test(n.content));
   const isSpace = node => node.type === 'whitespace' || node.type === 'parbreak';
 
-  function parseFile(original, { root = false, macros: inheritedMacros = null } = {}) {
+  function parseFile(original, { root = false, macros: inheritedMacros = null, trackSpans = false } = {}) {
     const blocks = [], textSpans=new WeakMap();
     function add(kind, from, to, info = {}) {
       if (from >= to || !original.slice(from, to).trim()) return;
@@ -245,7 +249,7 @@
     const start = n => at(n.position.start.offset), end = n => at(n.position.end.offset);
     function represent(nodes) {
       const commands = [];
-      const rich = asRich(nodes, slice, 0, commands, macros, {map:textSpans,at});
+      const rich = asRich(nodes, slice, 0, commands, macros, trackSpans ? {map:textSpans,at} : null);
       return { rich, commands: [...new Set(commands)] };
     }
     if (env) add('raw', 0, nodes.length ? start(nodes[0]) : end(env), { label: 'Document opening' });
@@ -314,7 +318,7 @@
   // Compare a reparse with the intended visual representation; never
   // substitute a source patch on ambiguous/non-contiguous boundaries.
   function patchText(source, kind, macros, content) {
-    const parsed=parseFile(source,{macros}), block=parsed.blocks[0];
+    const parsed=parseFile(source,{macros,trackSpans:true}), block=parsed.blocks[0];
     if(parsed.blocks.length!==1||block?.kind!==kind||!block.rich||
        block.from!==0||block.to!==source.length)return null;
     const before=block.rich.content[0].content??[], after=content.content[0].content??[];
