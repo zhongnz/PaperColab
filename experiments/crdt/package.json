@@ -1,0 +1,13 @@
+{
+  "name": "papercolab-crdt-trial",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node trial.mjs"
+  },
+  "dependencies": {
+    "loro-crdt": "1.16.0",
+    "yjs": "13.6.33"
+  }
+}
