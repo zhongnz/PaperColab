@@ -1,6 +1,18 @@
 # PaperColab
 
-PaperColab is an open-source project for writing and reviewing scientific manuscripts together. The offline editor opens an existing LaTeX project, lets an author edit a supported block visually or in source, and exports a project ZIP ready for its usual TeX build.
+PaperColab is an open-source project for writing and reviewing scientific manuscripts together. The workspace is a self-hosted project service: people suggest visual or source edits, a reviewer accepts them, and a lead approves a release that stays fixed. The offline editor still opens a LaTeX ZIP on one machine and exports the original bytes around each edited span.
+
+## Run the workspace
+
+```sh
+PAPERCOLAB_DEMO=1 python3 -m server
+```
+
+Open http://127.0.0.1:8787/. The demo signs in as Ada (lead and operator), Bao (author), Iris (reviewer) or Quill (assistant). Those tokens exist only for a local demo, and demo mode will not listen on a public address.
+
+A suggestion, whether it comes from the visual editor, the source editor, or `POST /api/mcp`, is the same review record. It names the person or assistant, the revision they saw, and the block. The manuscript changes only when a human reviewer or lead accepts it. Two overlapping edits of one block both stay pending; accepting one marks the other stale instead of merging the text. A split that stops being one block stays for review. Moving a block keeps its id, so a comment anchor still resolves. A release ZIP and its manifest stay byte-for-byte the same after later draft edits.
+
+The SQLite database is `data/papercolab.sqlite`. An operator can back it up, restore it, turn AI proposals off, set how long unreleased projects are kept, and read the audit log. Without demo mode, the first start prints an operator token. The offline checker remains at http://127.0.0.1:8787/index.html and does not call the service.
 
 ## Edit a manuscript
 
@@ -11,7 +23,7 @@ Open **web/index.html** and select **Open example editor**. For your own paper, 
 - Tables, display equations, custom macros, preambles and complex blocks appear as read-only LaTeX. **Revert block** restores its exact input. Visual undo and redo operate within the current block.
 - **Export project ZIP** saves the project. Edits are held in this tab’s memory. Export before closing the tab or handing the paper to a co-author.
 
-An untouched project exports as the original ZIP bytes. After an edit, PaperColab rewrites only the chosen source spans. It may reflow whitespace inside a visually edited paragraph. Original line endings, comments and bytes outside the edited spans are preserved, including the content of every other file. Edited ZIP containers may have different ZIP metadata. Visual editing covers UTF-8 source files up to 512 KiB. The current workspace is single-author.
+An untouched project exports as the original ZIP bytes. After an edit, PaperColab rewrites only the chosen source spans. It may reflow whitespace inside a visually edited paragraph. Original line endings, comments and bytes outside the edited spans are preserved, including the content of every other file. Edited ZIP containers may have different ZIP metadata. Visual editing covers UTF-8 source files up to 512 KiB. This offline page is single-author. Review and release happen in the workspace.
 
 ## Check an export
 
@@ -60,6 +72,7 @@ node --test tests/*.test.cjs
 python3 -m unittest discover -s tests -p 'test_*.py'
 python3 tests/browser_smoke.py
 python3 tests/editor_browser.py --output-zip build/editor-edited.zip
+python3 tests/project_browser.py
 ~~~
 
 The [pilot plan](docs/pilot.md) contains the interview guide, the two-minute friction log and the criteria for building the collaborative editor. The [manuscript corpus](corpus/README.md) records versioned source candidates, the first published-source inspection, and each paper's visually editable paragraph and heading counts.

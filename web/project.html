@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Workspace · PaperColab</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="mast"><div class="mast-inner">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>PaperColab</div>
+    <a class="repo" href="index.html">Offline checker</a>
+    <a class="repo" href="https://github.com/zhongnz/PaperColab" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+  </div></header>
+  <main>
+    <header class="intro">
+      <p class="overline">Research workspace</p>
+      <h1>Work on the project<span class="dot">.</span></h1>
+      <p>Import a manuscript, suggest a change in either editor, and let a person accept it. A release stays put after the draft moves on.</p>
+    </header>
+    <div class="project-tools">
+      <label>Signed in as <select id="actor"></select></label>
+      <label>Token <input id="token" autocomplete="off" spellcheck="false"></label>
+      <button type="button" class="secondary" id="use-token">Use token</button>
+      <span id="who" role="status"></span>
+    </div>
+    <p id="status" role="status" class="muted"></p>
+    <div id="error" role="alert" hidden></div>
+    <section class="panel" aria-labelledby="projects-heading">
+      <h2 id="projects-heading">Projects</h2>
+      <div class="project-tools">
+        <label>Title <input id="new-title" value="New manuscript"></label>
+        <button type="button" class="primary" id="create">Create project</button>
+        <button type="button" class="secondary" id="example">Open the estuary example</button>
+        <label class="secondary" style="padding:10px 17px;border-radius:5px">Import ZIP <input id="zip" type="file" accept=".zip,application/zip" hidden></label>
+      </div>
+        <div class="project-tools">
+          <label>Search <input id="search"></label>
+          <button type="button" class="secondary" id="run-search">Search</button>
+        </div>
+        <div id="search-results"></div>
+        <div id="project-list"></div>
+    </section>
+    <section id="open" class="stack" hidden>
+      <section class="panel">
+        <h2 id="project-title"></h2>
+        <p id="readiness" class="muted"></p>
+        <div id="members"></div>
+        <div class="project-tools">
+          <button type="button" class="secondary" id="export">Download current ZIP</button>
+          <button type="button" class="primary" id="release">Approve release</button>
+        </div>
+        <div id="releases"></div>
+        <div class="project-tools">
+          <label>Collection <input id="collection-name" value="Active papers"></label>
+          <button type="button" class="secondary" id="save-collection">Save collection</button>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>Manuscript</h2>
+        <div class="split">
+          <div>
+            <label for="file">File</label>
+            <select id="file"></select>
+            <div id="blocks" class="stack" style="margin-top:12px"></div>
+          </div>
+          <div>
+            <p id="block-label" class="muted"></p>
+            <div id="visual-host" class="surface"></div>
+            <div id="source-host" class="surface" style="margin-top:10px"></div>
+            <div class="project-tools">
+              <button type="button" class="primary" id="propose-visual">Propose visual edit</button>
+              <button type="button" class="secondary" id="propose-source">Propose source edit</button>
+              <button type="button" class="text-button" id="comment">Comment on this block</button>
+            </div>
+            <label>Comment <input id="comment-body" style="width:min(100%,420px)"></label>
+          </div>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>Review</h2>
+        <p class="muted">Visual and source edits wait as the same kind of suggestion. Accepting one leaves an overlapping edit stale instead of merging it.</p>
+        <div id="queue" class="queue stack"></div>
+      </section>
+      <section class="panel">
+        <h2>Evidence</h2>
+        <div id="library"></div>
+        <div class="project-tools">
+          <label>Claim <input id="claim" style="width:min(100%,320px)"></label>
+          <label>Evidence <select id="evidence"></select></label>
+          <button type="button" class="secondary" id="link-claim">Link claim</button>
+        </div>
+        <div class="project-tools">
+          <label>Kind <select id="object-kind">
+            <option>note</option><option>dataset</option><option>code</option><option>notebook</option><option>run</option><option>figure</option>
+          </select></label>
+          <label>Title <input id="object-title"></label>
+          <label>External id <input id="object-id" placeholder="optional"></label>
+          <button type="button" class="secondary" id="add-object">Add object</button>
+        </div>
+        <div id="links"></div>
+      </section>
+      <section class="panel" id="operate">
+        <h2>Decisions and operation</h2>
+        <div class="project-tools">
+          <label>Decision <input id="decision" style="width:min(100%,360px)"></label>
+          <button type="button" class="secondary" id="add-decision">Record decision</button>
+        </div>
+        <div id="decisions"></div>
+        <div class="project-tools" id="operator-tools">
+          <label><input id="allow-ai" type="checkbox"> Allow AI proposals</label>
+          <label>Retention days <input id="retention" type="number" min="0" max="3650" value="0" style="width:6rem"></label>
+          <button type="button" class="secondary" id="save-policy">Save policy</button>
+          <button type="button" class="secondary" id="backup">Download backup</button>
+          <button type="button" class="text-button" id="cost">Show cost</button>
+        </div>
+        <pre id="cost-out" hidden></pre>
+        <div id="audit"></div>
+      </section>
+    </section>
+  </main>
+  <footer>PaperColab <span aria-hidden="true">/</span> Workspace</footer>
+  <style>
+    #visual-host,#source-host{border:1px solid var(--line);border-radius:5px;min-height:72px;background:#fff}
+    #blocks button{text-align:left}
+  </style>
+  <script src="vendor/latex.min.js"></script>
+  <script src="vendor/engines.min.js"></script>
+  <script src="blocks.js"></script>
+  <script src="editors.js"></script>
+  <script src="identity.js"></script>
+  <script src="project.js"></script>
+</body>
+</html>

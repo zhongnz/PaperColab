@@ -3,3 +3,4 @@ __pycache__/
 /build/
 /corpus/local/
 /node_modules/
+/data/
