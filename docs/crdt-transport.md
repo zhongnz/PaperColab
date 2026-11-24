@@ -61,3 +61,21 @@ replicas or WebSockets. The optional bundle and third-party notices are built
 locally and served only in the enabled loopback experiment. No CDN or production
 bundle changes. The browser test exercises visual and LaTeX saves, two sessions,
 stale-draft retention and accepted checkpoint audit records.
+
+## Experimental live revision and presence stream
+
+Enable **Experimental live collaboration** in the hosted manuscript with the
+same loopback feature flag. An authenticated fetch stream sends newline-delimited
+JSON with accepted revision numbers and ephemeral cell-level presence. The client
+refreshes clean views and retains dirty drafts. The stream carries no manuscript
+text, tokens, CRDT operations or cursor offsets; presence names are resolved by
+the server, not submitted by clients. Presence is project-scoped and advisory,
+not a lock or permission. The server samples committed state every 400 ms,
+rechecks read authority and caps streams at 24 sessions with 60-second leases.
+Connections send heartbeats every five seconds and reconnect; disconnected
+sessions may remain visible until the next failed write or lease expiry. Polling
+is a fallback. HTTP streaming (not WebSockets) is deliberately used to test
+behaviour with the existing server. This is not a scalable pub/sub service,
+keystroke co-editing, durable offline recovery or a public deployment. The
+browser test blocks revision polling and checks push refresh, stale draft
+retention, presence and member revocation. No new third-party dependency.

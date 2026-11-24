@@ -10,6 +10,8 @@ WEB = ROOT / "web"
 class Api:
     def __init__(self, service):
         self.service = service
+        from server.live import Live
+        self.live = Live(service)
 
     def handle(self, method, target, headers, body):
         parts = urlsplit(target)
@@ -42,7 +44,8 @@ class Api:
         # /api/...
         if bits[:2] == ["api", "me"] and method == "GET":
             return {"id": actor["id"], "name": actor["name"], "kind": actor["kind"], "workspace_role": actor["workspace_role"],
-                    "experimental_crdt": self.service.crdt and (ROOT / "experiments/crdt/browser.bundle.js").is_file()}
+                    "experimental_crdt": self.service.crdt and (ROOT / "experiments/crdt/browser.bundle.js").is_file(),
+                    "experimental_live": self.service.crdt}
         if bits[:2] == ["api", "projects"] and len(bits) == 2 and method == "GET":
             return self.service.projects(actor)
         if bits[:2] == ["api", "projects"] and len(bits) == 2 and method == "POST":
@@ -53,6 +56,8 @@ class Api:
             return self.service.import_example(actor, bits[2])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "import" and method == "POST":
             return self.service.import_zip(actor, bits[2], body)
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "presence" and method == "POST":
+            return self.live.update(actor, bits[2], data)
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "revision" and method == "GET":
             return self.service.manuscript_revision(actor, bits[2])
         if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "blocks" and bits[5] == "crdt":

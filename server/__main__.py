@@ -9,19 +9,77 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from server.http_app import Api
-from server.service import Service
+from server.service import Service, ServiceError
 
 
 def make_handler(api):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            self.respond()
+            bits = [p for p in urlsplit(self.path).path.split("/") if p]
+            if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "live":
+                self.live_stream(bits[2])
+            else:
+                self.respond()
+
+        def live_stream(self, project):
+            auth = self.headers.get("Authorization", "")
+            token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+            # Browsers use fetch with a bearer header, never a URL credential.
+            # Reject cross-origin browser requests, including DNS-rebinding hosts.
+            host = self.headers.get("Host", "")
+            if host.split(":")[0] not in {"127.0.0.1", "localhost"} and not host.startswith("[::1]:"):
+                self._send(403, {"error": "Experimental stream is loopback-only."})
+                return
+            origin = self.headers.get("Origin")
+            if origin and origin not in {"http://" + host, "https://" + host}:
+                self._send(403, {"error": "Cross-origin stream is not permitted."})
+                return
+            try:
+                with api.service.lock:
+                    key = api.live.join(token, project)
+            except ServiceError as error:
+                self._send(error.status, {"error": str(error)})
+                return
+            try:
+                self.connection.settimeout(3)
+                self.send_response(200)
+                self.send_header("content-type", "application/x-ndjson")
+                self.send_header("cache-control", "no-store")
+                self.send_header("x-content-type-options", "nosniff")
+                self.send_header("connection", "close")
+                self.end_headers()
+                def send(event):
+                    self.wfile.write((json.dumps(event, separators=(",", ":")) + "\n").encode())
+                    self.wfile.flush()
+                send({"type": "hello", "session": key})
+                previous, last = None, 0
+                deadline = time.monotonic() + api.live.SESSION_SECONDS
+                while time.monotonic() < deadline:
+                    try:
+                        with api.service.lock:
+                            state = api.live.state(key, token, project)
+                    except ServiceError as error:
+                        send({"type": "closed", "status": error.status})
+                        break
+                    now = time.monotonic()
+                    if state != previous or now - last >= api.live.HEARTBEAT_SECONDS:
+                        send({"type": "state", **state})
+                        previous, last = state, now
+                    time.sleep(0.4)
+            except (OSError, TimeoutError):
+                pass
+            finally:
+                with api.service.lock:
+                    api.live.leave(key)
+                self.close_connection = True
 
         def do_POST(self):
             self.respond()
@@ -31,6 +89,9 @@ def make_handler(api):
 
         def respond(self):
             length = int(self.headers.get("content-length") or 0)
+            if self.path.split("?")[0].endswith("/presence") and length > 4096:
+                self._send(413, {"error": "Presence message too large."})
+                return
             if length > 64 * 1024 * 1024:
                 self._send(413, {"error": "The upload exceeds 64 MiB."})
                 return

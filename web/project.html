@@ -77,6 +77,11 @@
               <span class="muted">Prose and headings only. Explicit saves, no live keystroke merge.</span>
               <a href="/experimental/crdt-NOTICES.txt" target="_blank" rel="noreferrer">Licences</a>
             </div>
+            <div id="live-option" hidden>
+              <label><input type="checkbox" id="live-enabled"> Experimental live collaboration</label>
+              <p id="live-status" role="status" class="muted"></p>
+              <ul id="presence-list" aria-label="Other connected sessions"></ul>
+            </div>
             <p id="sync-state" role="status" class="muted"></p>
             <p id="hosted-draft-count" role="status" class="muted"></p>
             <div id="hosted-cells" hidden></div>

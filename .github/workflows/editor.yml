@@ -32,3 +32,5 @@ jobs:
       - run: python -m pip install playwright==1.56.0
       - name: Exercise browser visual and source Yjs saves
         run: python experiments/crdt/browser_test.py
+      - name: Exercise live revision and presence stream
+        run: python experiments/crdt/live_test.py

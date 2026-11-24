@@ -10,6 +10,96 @@
   const B=PaperColabBlocks, E=PaperColabEditors;
   const isMulti=()=>viewMode!=='focused';
   let crdtModule=null;
+  let live=null, liveRetry=0, presenceTimer=null;
+  function stopLive(){
+    const old=live; live=null;
+    old?.controller.abort();
+    clearTimeout(presenceTimer);presenceTimer=null;
+    $('live-status').textContent='';
+    $('presence-list').replaceChildren();
+  }
+  function liveControl(){
+    const supported=Boolean(me?.experimental_live&&detail);
+    $('live-option').hidden=!supported;
+    if(!supported){$('live-enabled').checked=false;stopLive();return;}
+    if($('live-enabled').checked)ensureLive();
+  }
+  function renderPresence(rows){
+    const host=$('presence-list');host.replaceChildren();
+    for(const row of rows){
+      const item=document.createElement('li');
+      const block=detail?.blocks.find(b=>b.stableId===row.cell);
+      item.textContent=row.name+' · '+(row.editing?'editing': 'viewing')+
+        (block?' · '+block.kind+' · '+block.quote.replace(/\s+/g,' ').slice(0,55):'');
+      host.append(item);
+    }
+    if(!rows.length){const item=document.createElement('li');item.textContent='No other connected sessions.';host.append(item);}
+  }
+  function presenceChanged(){
+    if(!live?.session)return;
+    clearTimeout(presenceTimer);
+    presenceTimer=setTimeout(async()=>{
+      const current=live;
+      if(!current?.session||detail?.id!==current.project||token!==current.token)return;
+      const cell=selected?.stableId??null;
+      const editing=isMulti()?multiDrafts.has(cell):dirty;
+      try{await api('POST','/api/projects/'+current.project+'/presence',{session:current.session,cell,editing});}
+      catch(error){if(live===current)$('live-status').textContent='Live presence unavailable; revision sync remains available.';}
+    },150);
+  }
+  function ensureLive(){
+    if(!detail||!me?.experimental_live||!$('live-enabled').checked)return;
+    if(live?.project===detail.id&&live.token===token)return;
+    if(Date.now()<liveRetry)return;
+    stopLive();
+    const current={project:detail.id,token,controller:new AbortController(),session:null,connected:false,latest:null};
+    live=current;
+    $('live-status').textContent='Connecting live stream…';
+    (async()=>{
+      try{
+        const res=await fetch('/api/projects/'+current.project+'/live',{
+          headers:{authorization:'Bearer '+current.token},signal:current.controller.signal
+        });
+        if(!res.ok||!res.body)throw Error('Live stream unavailable.');
+        const reader=res.body.getReader(),decoder=new TextDecoder();
+        let pending='';
+        for(;;){
+          const {done,value}=await reader.read();
+          if(done)break;
+          if(live!==current)return;
+          pending+=decoder.decode(value,{stream:true});
+          if(pending.length>256000)throw Error('Live message exceeds limit.');
+          let end;
+          while((end=pending.indexOf('\n'))!==-1){
+            const event=JSON.parse(pending.slice(0,end));pending=pending.slice(end+1);
+            if(event.type==='hello'){
+              current.session=event.session;current.connected=true;
+              $('live-status').textContent='Live revision stream connected';
+              presenceChanged();
+            }else if(event.type==='state'){
+              current.latest=event;renderPresence(event.presence);
+              await applyLiveRevision();
+            }else if(event.type==='closed')throw Error('Live session closed.');
+          }
+        }
+      }catch(error){
+        if(live===current&&!current.controller.signal.aborted)$('live-status').textContent='Live stream interrupted; using revision polling.';
+      }finally{
+        if(live===current){live=null;liveRetry=Date.now()+1500;$('presence-list').replaceChildren();$('live-status').textContent='Reconnecting; revision polling available.';}
+      }
+    })();
+  }
+  async function applyLiveRevision(){
+    const current=live;
+    if(!current?.connected||!current.latest||busy||polling||detail?.id!==current.project||token!==current.token)return;
+    const revision=current.latest.revision;
+    if(revision===detail.revision)return;
+    if(dirty){$('sync-state').textContent='Remote revision '+revision+' available. Your local draft is retained; save checks its cell version.';return;}
+    busy=true;freeze(true);
+    try{await openProject(current.project);}
+    catch(error){fail(error);}
+    finally{busy=false;freeze(false);}
+  }
   function updateTransportControl(){
     const supported=Boolean(me?.experimental_crdt&&directAllowed());
     $('crdt-option').hidden=!supported;
@@ -27,6 +117,7 @@
     $('discard-local').disabled=!value;
     $('refresh-manuscript').disabled=value;
     $('hosted-draft-count').textContent=isMulti() ? multiDrafts.size+' unsaved cell'+(multiDrafts.size===1?'':'s') : '';
+    presenceChanged();
   }
 
   function say(message) { $('status').textContent = message || ''; }
@@ -112,6 +203,7 @@
     renderReleases();
     if (select.value) await showFile(select.value);
     else destroyEditors();
+    liveControl();presenceChanged();
   }
 
   function renderQueue() {
@@ -208,7 +300,7 @@
       button.textContent = (block.kind === 'heading' ? 'Heading' : block.rich ? 'Paragraph' : 'Preserved') + ' · ' + block.quote.replace(/\s+/g, ' ').slice(0, 80);
       button.onclick = () => {
         if(busy) return;
-        if(isMulti()) {selected=block;cellViews.get(block.stableId)?.element.scrollIntoView({block:'nearest'});}
+        if(isMulti()) {selected=block;presenceChanged();cellViews.get(block.stableId)?.element.scrollIntoView({block:'nearest'});}
         else if(!dirty || window.confirm('Discard your local cell draft?')) selectBlock(block);
       };
       host.append(button);
@@ -316,7 +408,7 @@
       apply.disabled=false;changed(area.value,'source','Apply or discard the LaTeX draft first.');
     });
     save.disabled=propose.disabled=discard.disabled=true;
-    element.addEventListener('focusin',()=>{selected=base;});
+    element.addEventListener('focusin',()=>{selected=base;presenceChanged();});
     return {element,destroy:()=>editor?.destroy()};
   }
   function replaceHostedCell(base) {
@@ -408,6 +500,7 @@
       draftState(true);
     });
     sourceDraft = PaperColabBlocks.current(parsed, local);
+    presenceChanged();
   }
 
   async function saveDirect() {
@@ -420,6 +513,10 @@
     say('Cell saved via '+saved.transport+'. Other sessions will receive the revision.');
   }
   async function poll() {
+    if($('live-enabled').checked&&me?.experimental_live){
+      ensureLive();
+      if(live?.connected){await applyLiveRevision();return;}
+    }
     if(!detail || busy || polling) return;
     const id=detail.id, revision=detail.revision, credential=token;
     polling=true;
@@ -483,6 +580,7 @@
     if(busy || (dirty && !window.confirm('Discard your local cell draft?'))) {$('actor').value=token;return;}
     act(async()=>{
       const previous=detail?.id;
+      stopLive();$('live-enabled').checked=false;
       destroyEditors(); detail=null; selected=null; fileText='';
       $('crdt-enabled').checked=false;updateTransportControl();
       $('open').hidden=true;
@@ -513,6 +611,8 @@
   $('discard-local').onclick=()=>act(()=>openProject(detail.id),true);
   $('refresh-manuscript').onclick=()=>act(()=>openProject(detail.id));
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
+  $('live-enabled').onchange=()=>{if($('live-enabled').checked)ensureLive();else stopLive();};
+  window.addEventListener('pagehide',stopLive);
   setInterval(poll,2500);
   $('propose-visual').onclick = () => act(() => propose('visual'),true);
   $('propose-source').onclick = () => act(() => propose('source'),true);
