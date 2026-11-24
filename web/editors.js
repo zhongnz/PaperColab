@@ -2,6 +2,23 @@
 (() => {
   'use strict';
   const E = PaperColabEngines;
+
+  function renderMath(host, latex) {
+    if (latex.length > 4096) return false;
+    const tex = latex.trim();
+    const delimited = /^(?:\$\$([\s\S]+)\$\$|\\\[([\s\S]+)\\\]|\$([\s\S]+)\$|\\\(([\s\S]+)\\\))$/.exec(tex);
+    const environment = /^\\begin\{(equation\*?|align\*?|gather\*?|multline\*?)\}[\s\S]+\\end\{\1\}$/.test(tex);
+    if (!delimited && !environment) return false;
+    const expression = environment ? tex : delimited.slice(1).find(value => value !== undefined);
+    try {
+      E.KaTeX.render(expression, host, { output: 'mathml', displayMode: Boolean(environment || delimited[1] || delimited[2]),
+        trust: false, throwOnError: true, strict: 'ignore', maxExpand: 300, maxSize: 12 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   const documentNode = E.TiptapNode.create({ name: 'doc', topNode: true, content: 'paragraph' });
   const paragraph = E.TiptapNode.create({ name: 'paragraph', group: 'block', content: 'inline*',
     parseHTML: () => [{ tag: 'p' }], renderHTML: () => ['p', 0] });
@@ -11,6 +28,18 @@
     renderHTML({ node }) {
       const latex = node.attrs.latex;
       return ['span', { class: 'tex-token', contenteditable: 'false', title: latex, 'aria-label': latex }, latex];
+    },
+    addNodeView() {
+      return ({ node }) => {
+        const latex = node.attrs.latex;
+        const dom = document.createElement('span');
+        dom.className = 'tex-token';
+        dom.contentEditable = 'false';
+        dom.title = latex;
+        if (renderMath(dom, latex)) dom.classList.add('tex-math');
+        else dom.textContent = latex;
+        return { dom };
+      };
     } });
   const bold = E.TiptapMark.create({ name: 'bold', parseHTML: () => [{ tag: 'strong' }, { tag: 'b' }], renderHTML: () => ['strong', 0] });
   const italic = E.TiptapMark.create({ name: 'italic',
@@ -22,7 +51,7 @@
       name: 'blockEditing',
       addProseMirrorPlugins() {
         return [E.history(), new E.Plugin({ filterTransaction(tr, state) {
-          if (!tr.docChanged) return true;
+          if (!tr.docChanged || tr.getMeta('papercolab-source-update')) return true;
           const old = PaperColabBlocks.tokens(state.doc.toJSON());
           const next = PaperColabBlocks.tokens(tr.doc.toJSON());
           if (old.length === next.length && old.every((value, i) => value === next[i])) return true;
@@ -36,7 +65,7 @@
           'Mod-i': () => this.editor.commands.toggleMark('italic'), Enter: () => true, 'Shift-Enter': () => true };
       }
     });
-    return new E.Editor({
+    const editor = new E.Editor({
       element: host, extensions: [documentNode, paragraph, text, bold, italic, token, editing], content,
       injectCSS: false, enableInputRules: false, enablePasteRules: false,
       editorProps: { attributes: { class: 'visual-prose', 'aria-label': 'Visual block text', role: 'textbox',
@@ -50,6 +79,14 @@
       onUpdate: ({ editor }) => onChange(editor.getJSON()),
       onTransaction: onState, onSelectionUpdate: onState
     });
+    editor.setFromSource = nextContent => {
+      const { state, view } = editor;
+      const next = editor.schema.nodeFromJSON(nextContent);
+      if (state.doc.eq(next)) return;
+      view.dispatch(state.tr.replaceWith(0, state.doc.content.size, next.content)
+        .setMeta('papercolab-source-update', true).setMeta('preventUpdate', true).setMeta('addToHistory', false));
+    };
+    return editor;
   }
 
   function source(host, initial, readOnly, onChange) {
@@ -69,6 +106,6 @@
       finally { quiet = false; }
     } };
   }
-  globalThis.PaperColabEditors = { visual, source, undo: editor => runHistory(editor, E.undo), redo: editor => runHistory(editor, E.redo),
+  globalThis.PaperColabEditors = { visual, source, renderMath, undo: editor => runHistory(editor, E.undo), redo: editor => runHistory(editor, E.redo),
     canUndo: editor => E.undo(editor.state), canRedo: editor => E.redo(editor.state) };
 })();

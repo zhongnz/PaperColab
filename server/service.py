@@ -1,15 +1,16 @@
 """Self-hosted PaperColab project service.
 
 The server is the authority for membership, suggestions, anchors, evidence and
-releases. Visual and source edits create the same kind of suggestion. Nothing
-changes the manuscript until a person accepts it.
+releases. A human approves suggestions and a project lead controls imports and
+block moves.
 """
+from contextlib import closing
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import re
 import secrets
-import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -43,10 +44,8 @@ class Service:
         self.path = Path(database)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = Lock()
-        self.db = sqlite3.connect(self.path, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA foreign_keys = ON")
-        self._schema()
+        self.db = self._connect(self.path)
+        self._schema(self.db)
         if demo and not self._rows("SELECT id FROM actors"):
             self._seed_demo()
 
@@ -56,10 +55,17 @@ class Service:
     def now(self):
         return int(self.clock())
 
-    def _schema(self):
-        self.db.executescript("""
+    def _connect(self, path):
+        db = sqlite3.connect(path, check_same_thread=False)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys = ON")
+        db.execute("PRAGMA secure_delete = ON")
+        return db
+
+    def _schema(self, db):
+        db.executescript("""
         CREATE TABLE IF NOT EXISTS actors (
-          id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, token TEXT NOT NULL UNIQUE,
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,
           workspace_role TEXT NOT NULL DEFAULT '', revoked INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS projects (
           id TEXT PRIMARY KEY, title TEXT NOT NULL, revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -72,11 +78,13 @@ class Service:
           project_id TEXT NOT NULL, stable_id TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL,
           start INTEGER NOT NULL, end INTEGER NOT NULL, quote TEXT NOT NULL, label TEXT NOT NULL,
           rich INTEGER NOT NULL, fallback TEXT NOT NULL, commands TEXT NOT NULL, owner_id TEXT,
+          revision INTEGER NOT NULL DEFAULT 1, allow_ai INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (project_id, stable_id));
         CREATE TABLE IF NOT EXISTS suggestions (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL, block_id TEXT NOT NULL, actor_id TEXT NOT NULL,
           mode TEXT NOT NULL, base_revision INTEGER NOT NULL, before_quote TEXT NOT NULL, after_quote TEXT NOT NULL,
-          status TEXT NOT NULL, result TEXT NOT NULL, evidence TEXT NOT NULL, decided_by TEXT, decided_at INTEGER);
+          status TEXT NOT NULL, result TEXT NOT NULL, evidence TEXT NOT NULL, decided_by TEXT, decided_at INTEGER,
+          base_block_revision INTEGER);
         CREATE TABLE IF NOT EXISTS anchors (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL, block_id TEXT NOT NULL, quote TEXT NOT NULL,
           actor_id TEXT NOT NULL, created_revision INTEGER NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0);
@@ -110,9 +118,35 @@ class Service:
         CREATE TABLE IF NOT EXISTS policy (
           id INTEGER PRIMARY KEY CHECK (id = 1), allow_ai INTEGER NOT NULL, retention_days INTEGER NOT NULL);
         """)
-        if not self._rows("SELECT id FROM policy"):
-            self.db.execute("INSERT INTO policy (id, allow_ai, retention_days) VALUES (1, 1, 0)")
-            self.db.commit()
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            actor_columns = {row["name"] for row in db.execute("PRAGMA table_info(actors)")}
+            migrate_credentials = "token" in actor_columns
+            if migrate_credentials:
+                actors = db.execute("SELECT id, token FROM actors").fetchall()
+                db.execute("ALTER TABLE actors RENAME COLUMN token TO token_hash")
+                db.executemany("UPDATE actors SET token_hash = ? WHERE id = ?",
+                               ((_credential_hash(row["token"]), row["id"]) for row in actors))
+            block_columns = {row["name"] for row in db.execute("PRAGMA table_info(blocks)")}
+            if "revision" not in block_columns:
+                db.execute("ALTER TABLE blocks ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+                db.execute("""UPDATE blocks SET revision = (SELECT revision FROM projects WHERE id = blocks.project_id)""")
+            if "allow_ai" not in block_columns:
+                db.execute("ALTER TABLE blocks ADD COLUMN allow_ai INTEGER NOT NULL DEFAULT 0")
+            suggestion_columns = {row["name"] for row in db.execute("PRAGMA table_info(suggestions)")}
+            if "base_block_revision" not in suggestion_columns:
+                db.execute("ALTER TABLE suggestions ADD COLUMN base_block_revision INTEGER")
+                # Only the current project revision has a verifiable starting block on an older database.
+                db.execute("""UPDATE suggestions SET base_block_revision = base_revision WHERE status = 'pending' AND EXISTS
+                                   (SELECT 1 FROM blocks WHERE project_id = suggestions.project_id
+                                    AND stable_id = suggestions.block_id AND revision = suggestions.base_revision
+                                    AND quote = suggestions.before_quote AND rich = 1)""")
+                db.execute("""UPDATE suggestions SET status = 'stale', result = 'stale'
+                                   WHERE status = 'pending' AND base_block_revision IS NULL""")
+            db.execute("INSERT OR IGNORE INTO policy (id, allow_ai, retention_days) VALUES (1, 1, 0)")
+        if migrate_credentials:
+            db.execute("VACUUM")
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     def _seed_demo(self):
         created = {}
@@ -125,13 +159,15 @@ class Service:
         self._audit(created["Ada"], "seed-demo", project, {"project": project})
         self.db.commit()
         ada = self.actor_by_token("demo-ada")
-        self.import_example(ada, project)
+        example = self.import_example(ada, project)
+        sampling = next(block for block in example["blocks"] if block["rich"] and "two readings" in block["quote"])
+        self.set_block_ai(ada, project, sampling["stableId"], True)
 
     def _insert_actor(self, name, kind, token, workspace_role):
         actor_id = str(uuid.uuid4())
         self.db.execute(
-            "INSERT INTO actors (id, name, kind, token, workspace_role, revoked, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
-            (actor_id, name, kind, token, workspace_role, self.now()))
+            "INSERT INTO actors (id, name, kind, token_hash, workspace_role, revoked, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
+            (actor_id, name, kind, _credential_hash(token), workspace_role, self.now()))
         return actor_id
 
     def _create_project_row(self, title):
@@ -142,9 +178,9 @@ class Service:
         return project_id
 
     def actor_by_token(self, token):
-        if not token:
+        if not isinstance(token, str) or not token:
             raise ServiceError(401, "Sign in with a bearer token.")
-        row = self.db.execute("SELECT * FROM actors WHERE token = ?", (token,)).fetchone()
+        row = self.db.execute("SELECT * FROM actors WHERE token_hash = ?", (_credential_hash(token),)).fetchone()
         if not row:
             raise ServiceError(401, "Unknown token.")
         return self._actor(row)
@@ -168,7 +204,8 @@ class Service:
         return revision
 
     def _member(self, actor, project_id):
-        return self.db.execute("SELECT role FROM members WHERE project_id = ? AND actor_id = ?",
+        return self.db.execute("""SELECT role FROM members JOIN actors ON actors.id = members.actor_id
+                               WHERE project_id = ? AND actor_id = ? AND actors.revoked = 0""",
                                (project_id, actor["id"])).fetchone()
 
     def require(self, actor, project_id, action):
@@ -183,7 +220,7 @@ class Service:
         if not membership:
             raise ServiceError(403, "You are not a member of this project.")
         role = membership["role"]
-        if actor["kind"] == "assistant" and action in {"decide", "release", "members", "own", "dismiss"}:
+        if actor["kind"] == "assistant" and action in {"decide", "release", "members", "own", "structure", "dismiss", "decide_record"}:
             raise ServiceError(403, "An assistant cannot decide, release, or change authority.")
         if action == "propose" and actor["kind"] == "assistant" and not self.policy()["allow_ai"]:
             raise ServiceError(403, "AI proposals are turned off for this workspace.")
@@ -195,6 +232,7 @@ class Service:
             "release": {"lead"},
             "members": {"lead"},
             "own": {"lead"},
+            "structure": {"lead"},
             "dismiss": {"reviewer", "lead"},
             "decide_record": {"lead"},
         }
@@ -211,6 +249,9 @@ class Service:
         if retention_days < 0 or retention_days > 3650:
             raise ServiceError(400, "Retention must be between 0 and 3650 days.")
         self.db.execute("UPDATE policy SET allow_ai = ?, retention_days = ? WHERE id = 1", (int(bool(allow_ai)), int(retention_days)))
+        if not allow_ai:
+            self.db.execute("""UPDATE suggestions SET status = 'revoked', result = 'revoked' WHERE status = 'pending'
+                               AND actor_id IN (SELECT id FROM actors WHERE kind = 'assistant')""")
         self._audit(actor["id"], "policy", None, self.policy())
         self.db.commit()
         return self.policy()
@@ -236,16 +277,22 @@ class Service:
         self.db.commit()
         return {"id": actor_id, "revoked": True}
 
-    def create_project(self, actor, title, example=False):
+    def create_project(self, actor, title, example=False, *, starter=False):
         if actor["revoked"]:
             raise ServiceError(403, "This actor is revoked.")
         if actor["kind"] == "assistant":
             raise ServiceError(403, "An assistant cannot create a project.")
-        project_id = self._create_project_row(title.strip() or "Untitled project")
-        role = "lead"
-        self.db.execute("INSERT INTO members (project_id, actor_id, role) VALUES (?, ?, ?)", (project_id, actor["id"], role))
-        self._audit(actor["id"], "create-project", project_id, {"title": title})
-        self.db.commit()
+        if example and starter:
+            raise ServiceError(400, "Choose a starter manuscript or the example.")
+        project_title = title.strip() or "Untitled project"
+        with self.db:
+            project_id = self._create_project_row(project_title)
+            self.db.execute("INSERT INTO members (project_id, actor_id, role) VALUES (?, ?, 'lead')", (project_id, actor["id"]))
+            self._audit(actor["id"], "create-project", project_id, {"title": title})
+            if starter:
+                revision = self._touch(project_id)
+                self._store_file(actor, project_id, "main.tex", _starter_manuscript(project_title), [], revision)
+                self._audit(actor["id"], "import", project_id, {"files": 1, "revision": revision})
         if example:
             self.import_example(actor, project_id)
         return self.project(actor, project_id)
@@ -254,21 +301,47 @@ class Service:
         self.require(actor, project_id, "members")
         if role not in {"reader", "reviewer", "author", "lead"}:
             raise ServiceError(400, "Unknown project role.")
-        target = self.db.execute("SELECT id, revoked FROM actors WHERE id = ?", (actor_id,)).fetchone()
+        target = self.db.execute("SELECT kind, revoked FROM actors WHERE id = ?", (actor_id,)).fetchone()
         if not target or target["revoked"]:
             raise ServiceError(404, "Unknown actor.")
-        self.db.execute("INSERT INTO members (project_id, actor_id, role) VALUES (?, ?, ?) ON CONFLICT(project_id, actor_id) DO UPDATE SET role = excluded.role",
-                        (project_id, actor_id, role))
-        self._audit(actor["id"], "member", project_id, {"actor": actor_id, "role": role})
-        self.db.commit()
+        if role == "lead" and target["kind"] != "human":
+            raise ServiceError(400, "A project lead must be human.")
+        with self.db:
+            if role != "lead":
+                self._require_remaining_lead(project_id, actor_id)
+            self.db.execute("""INSERT INTO members (project_id, actor_id, role) VALUES (?, ?, ?)
+                               ON CONFLICT(project_id, actor_id) DO UPDATE SET role = excluded.role""", (project_id, actor_id, role))
+            if role not in {"author", "lead"}:
+                self._revoke_proposals(project_id, actor_id)
+                self._clear_owned_blocks(project_id, actor_id)
+            self._audit(actor["id"], "member", project_id, {"actor": actor_id, "role": role})
         return {"actor_id": actor_id, "role": role}
 
     def remove_member(self, actor, project_id, actor_id):
         self.require(actor, project_id, "members")
-        self.db.execute("DELETE FROM members WHERE project_id = ? AND actor_id = ?", (project_id, actor_id))
-        self._audit(actor["id"], "remove-member", project_id, {"actor": actor_id})
-        self.db.commit()
+        with self.db:
+            self._require_remaining_lead(project_id, actor_id)
+            self.db.execute("DELETE FROM members WHERE project_id = ? AND actor_id = ?", (project_id, actor_id))
+            self._revoke_proposals(project_id, actor_id)
+            self._clear_owned_blocks(project_id, actor_id)
+            self._audit(actor["id"], "remove-member", project_id, {"actor": actor_id})
         return {"removed": actor_id}
+
+    def _require_remaining_lead(self, project_id, leaving_actor_id):
+        leads = {row["actor_id"] for row in self._rows("""SELECT actor_id FROM members
+                  JOIN actors ON actors.id = members.actor_id
+                  WHERE project_id = ? AND role = 'lead' AND actors.kind = 'human' AND actors.revoked = 0""", (project_id,))}
+        if leads == {leaving_actor_id}:
+            raise ServiceError(409, "Assign another active human lead before changing this membership.")
+
+    def _clear_owned_blocks(self, project_id, actor_id):
+        owned = self._rows("SELECT stable_id FROM blocks WHERE project_id = ? AND owner_id = ?", (project_id, actor_id))
+        if owned:
+            revision = self._touch(project_id)
+            self.db.execute("UPDATE blocks SET owner_id = NULL, revision = ? WHERE project_id = ? AND owner_id = ?",
+                            (revision, project_id, actor_id))
+            for row in owned:
+                self._stale_proposals(project_id, row["stable_id"])
 
     def projects(self, actor):
         if actor["revoked"]:
@@ -278,14 +351,19 @@ class Service:
         return [dict(row) for row in rows]
 
     def project(self, actor, project_id):
-        self.require(actor, project_id, "read")
+        role = self.require(actor, project_id, "read")
         row = self.db.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         if not row:
             raise ServiceError(404, "Unknown project.")
         members = [dict(item) for item in self._rows("""SELECT a.id, a.name, a.kind, m.role FROM members m
                                                         JOIN actors a ON a.id = m.actor_id WHERE m.project_id = ? ORDER BY a.name""", (project_id,))]
         blocks = self._blocks(project_id)
+        ai_enabled = actor["kind"] == "assistant" and self.policy()["allow_ai"]
+        for block in blocks:
+            block["can_propose"] = block["rich"] and not self._block_proposal_error(actor, role, block, ai_enabled)
         suggestions = self._suggestions(project_id)
+        for suggestion in suggestions:
+            suggestion["can_decide"] = actor["kind"] == "human" and role in {"reviewer", "lead"} and suggestion["status"] == "pending"
         anchors = [self._anchor_view(project_id, item) for item in self._rows("SELECT * FROM anchors WHERE project_id = ?", (project_id,))]
         comments = [dict(item) for item in self._rows("SELECT * FROM comments WHERE project_id = ? ORDER BY created_at", (project_id,))]
         objects = [self._object_view(item) for item in self._rows("SELECT * FROM objects WHERE project_id = ? ORDER BY title", (project_id,))]
@@ -313,7 +391,7 @@ class Service:
         return {"path": path, "text": row["current"]}
 
     def import_example(self, actor, project_id):
-        self.require(actor, project_id, "propose")
+        self.require(actor, project_id, "structure")
         files = []
         for path in sorted(EXAMPLE.rglob("*")):
             if path.is_file():
@@ -321,7 +399,7 @@ class Service:
         return self.import_files(actor, project_id, files)
 
     def import_zip(self, actor, project_id, blob):
-        self.require(actor, project_id, "propose")
+        self.require(actor, project_id, "structure")
         import sys
         sys.path.insert(0, str(ROOT / "scripts"))
         from build_worker import unpack
@@ -334,24 +412,33 @@ class Service:
         return self.import_files(actor, project_id, files)
 
     def import_files(self, actor, project_id, files):
-        self.require(actor, project_id, "propose")
+        self.require(actor, project_id, "structure")
         if not files:
             raise ServiceError(400, "The import is empty.")
         if len(files) > 4000:
             raise ServiceError(400, "The import has more than 4,000 files.")
-        self.db.execute("DELETE FROM blocks WHERE project_id = ?", (project_id,))
-        self.db.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
-        self.db.execute("""DELETE FROM object_versions WHERE object_id IN
-                           (SELECT id FROM objects WHERE project_id = ? AND kind = 'source' AND external LIKE '%"system": "bibtex"%')""", (project_id,))
-        self.db.execute("DELETE FROM objects WHERE project_id = ? AND kind = 'source' AND external LIKE '%\"system\": \"bibtex\"%'", (project_id,))
-        for path, data in files:
-            self._store_file(actor, project_id, path, data)
-        self._touch(project_id)
-        self._audit(actor["id"], "import", project_id, {"files": len(files)})
-        self.db.commit()
+        with self.db:
+            existing_files = {row["path"]: row["current"] for row in self._rows(
+                "SELECT path, current FROM files WHERE project_id = ? AND is_text = 1", (project_id,))}
+            existing_blocks = {}
+            for block in self._blocks(project_id):
+                existing_blocks.setdefault(block["path"], []).append(block)
+            self.db.execute("DELETE FROM blocks WHERE project_id = ?", (project_id,))
+            self.db.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
+            self.db.execute("""DELETE FROM object_versions WHERE object_id IN
+                               (SELECT id FROM objects WHERE project_id = ? AND kind = 'source' AND external LIKE '%"system": "bibtex"%')""", (project_id,))
+            self.db.execute("DELETE FROM objects WHERE project_id = ? AND kind = 'source' AND external LIKE '%\"system\": \"bibtex\"%'", (project_id,))
+            revision = self._touch(project_id)
+            for path, data in files:
+                old_text = existing_files.get(path)
+                previous = existing_blocks.get(path, []) if old_text is not None and data == old_text.encode() else []
+                self._store_file(actor, project_id, path, data, previous, revision)
+            self.db.execute("""UPDATE suggestions SET status = 'stale', result = 'stale'
+                               WHERE project_id = ? AND status = 'pending'""", (project_id,))
+            self._audit(actor["id"], "import", project_id, {"files": len(files), "revision": revision})
         return self.project(actor, project_id)
 
-    def _store_file(self, actor, project_id, path, data):
+    def _store_file(self, actor, project_id, path, data, previous, revision):
         suffix = Path(path).suffix.lower()
         text = None
         if suffix in TEXT_SUFFIXES or suffix == "":
@@ -364,8 +451,8 @@ class Service:
         self.db.execute("""INSERT INTO files (project_id, path, original, current, is_text, is_root, dirty)
                            VALUES (?, ?, ?, ?, ?, ?, 0)""", (project_id, path, data, text, int(is_text), int(is_root)))
         if is_text and suffix in {".tex", ".ltx"}:
-            listed = self._node({"op": "catalogue", "text": text, "root": is_root, "previous": []})
-            self._replace_blocks(project_id, path, listed["blocks"])
+            blocks = previous or self._node({"op": "catalogue", "text": text, "root": is_root})["blocks"]
+            self._replace_blocks(project_id, path, blocks, previous, revision, {block["stableId"] for block in previous})
         if is_text and suffix == ".bib":
             for entry in bib_entries(text):
                 self._add_object(actor, project_id, "source", entry["title"], entry["raw"], actor["id"],
@@ -377,14 +464,18 @@ class Service:
             raise ServiceError(500, "The manuscript parser failed. " + proc.stderr[-400:])
         return json.loads(proc.stdout)
 
-    def _replace_blocks(self, project_id, path, blocks):
+    def _replace_blocks(self, project_id, path, blocks, previous, revision, changed):
+        metadata = {block["stableId"]: block for block in previous}
         self.db.execute("DELETE FROM blocks WHERE project_id = ? AND path = ?", (project_id, path))
         for block in blocks:
-            self.db.execute("""INSERT INTO blocks (project_id, stable_id, path, kind, start, end, quote, label, rich, fallback, commands, owner_id)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+            prior = metadata.get(block["stableId"])
+            self.db.execute("""INSERT INTO blocks (project_id, stable_id, path, kind, start, end, quote, label, rich, fallback, commands, owner_id, revision, allow_ai)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (project_id, block["stableId"], path, block["kind"], block["from"], block["to"], block["quote"],
                              block.get("label") or "", int(block.get("rich") or 0), block.get("fallback") or "",
-                             json.dumps(block.get("commands") or [])))
+                             json.dumps(block.get("commands") or []), prior["owner_id"] if prior else None,
+                             prior["revision"] if prior and block["stableId"] not in changed else revision,
+                             int(prior["allow_ai"]) if prior else 0))
 
     def _blocks(self, project_id, path=None):
         sql = "SELECT * FROM blocks WHERE project_id = ?"
@@ -397,7 +488,8 @@ class Service:
         for row in self._rows(sql, args):
             result.append({"stableId": row["stable_id"], "path": row["path"], "kind": row["kind"], "from": row["start"],
                            "to": row["end"], "quote": row["quote"], "label": row["label"], "rich": bool(row["rich"]),
-                           "fallback": row["fallback"], "commands": json.loads(row["commands"]), "owner_id": row["owner_id"]})
+                           "fallback": row["fallback"], "commands": json.loads(row["commands"]), "owner_id": row["owner_id"],
+                           "revision": row["revision"], "allow_ai": bool(row["allow_ai"])})
         return result
 
     def _block_row(self, project_id, stable_id):
@@ -408,29 +500,76 @@ class Service:
 
     def assign_owner(self, actor, project_id, stable_id, owner_id):
         self.require(actor, project_id, "own")
-        self._block_row(project_id, stable_id)
-        if owner_id and not self.db.execute("SELECT 1 FROM members WHERE project_id = ? AND actor_id = ?", (project_id, owner_id)).fetchone():
-            raise ServiceError(400, "The owner must be a project member. Ownership does not grant a role.")
-        self.db.execute("UPDATE blocks SET owner_id = ? WHERE project_id = ? AND stable_id = ?", (owner_id, project_id, stable_id))
-        self._audit(actor["id"], "owner", project_id, {"block": stable_id, "owner": owner_id})
-        self.db.commit()
-        return {"stableId": stable_id, "owner_id": owner_id}
+        block = self._block_row(project_id, stable_id)
+        owner_id = owner_id or None
+        if owner_id and not self.db.execute("""SELECT 1 FROM members JOIN actors ON actors.id = members.actor_id
+                WHERE project_id = ? AND actor_id = ? AND role IN ('author', 'lead')
+                AND actors.kind = 'human' AND actors.revoked = 0""",
+                (project_id, owner_id)).fetchone():
+            raise ServiceError(400, "The owner must be an active human author or project lead.")
+        return self._update_block_policy(actor, project_id, block, owner_id, bool(block["allow_ai"]), "owner")
 
-    def propose(self, actor, project_id, block_id, base_revision, before, after, mode, evidence_ids=None):
-        self.require(actor, project_id, "propose")
+    def set_block_ai(self, actor, project_id, stable_id, allow_ai):
+        self.require(actor, project_id, "own")
+        if not isinstance(allow_ai, bool):
+            raise ServiceError(400, "Specify whether this block allows assistant proposals.")
+        block = self._block_row(project_id, stable_id)
+        return self._update_block_policy(actor, project_id, block, block["owner_id"], allow_ai, "block-ai")
+
+    def _update_block_policy(self, actor, project_id, block, owner_id, allow_ai, action):
+        block_id = block["stable_id"]
+        revision = block["revision"]
+        if owner_id != block["owner_id"] or allow_ai != bool(block["allow_ai"]):
+            with self.db:
+                revision = self._touch(project_id)
+                self.db.execute("UPDATE blocks SET owner_id = ?, allow_ai = ?, revision = ? WHERE project_id = ? AND stable_id = ?",
+                                (owner_id, int(allow_ai), revision, project_id, block_id))
+                self._stale_proposals(project_id, block_id)
+                self._audit(actor["id"], action, project_id, {"block": block_id, "owner": owner_id, "allow_ai": allow_ai})
+        return {"stableId": block_id, "owner_id": owner_id, "allow_ai": allow_ai, "revision": revision}
+
+    def _block_proposal_error(self, actor, role, block, ai_enabled):
+        if role not in {"author", "lead"}:
+            return "Your role cannot propose edits."
+        if actor["kind"] == "assistant":
+            if not ai_enabled:
+                return "AI proposals are turned off for this workspace."
+            if not block["allow_ai"]:
+                return "A project lead must enable assistant proposals for this block."
+        elif role != "lead" and block["owner_id"] not in {None, actor["id"]}:
+            return "Only the block owner or a project lead can propose an edit to this block."
+        return None
+
+    def propose(self, actor, project_id, block_id, base_revision, before, after, mode, evidence_ids=None, *, base_block_revision=None):
+        role = self.require(actor, project_id, "propose")
         if mode not in {"visual", "source"}:
             raise ServiceError(400, "A suggestion is either visual or source.")
         block = self._block_row(project_id, block_id)
+        error = self._block_proposal_error(actor, role, block, ai_enabled=True)
+        if error:
+            raise ServiceError(403, error)
+        if type(base_revision) is not int or base_revision < 1 or (
+                base_block_revision is not None and (type(base_block_revision) is not int or base_block_revision < 1)):
+            raise ServiceError(400, "Provide valid positive revision numbers.")
+        project_revision = self.db.execute("SELECT revision FROM projects WHERE id = ?", (project_id,)).fetchone()["revision"]
+        # Legacy clients send only the project revision that they read. A block may
+        # be unchanged across several revisions of the project.
+        revision_matches = block["revision"] <= base_revision <= project_revision
+        if base_block_revision is None:
+            base_block_revision = block["revision"] if revision_matches else base_revision
+        revision_matches = revision_matches and base_block_revision == block["revision"]
         evidence_ids = evidence_ids or []
         status = "pending"
         result = "pending"
-        if before != block["quote"] or not block["rich"]:
+        if not revision_matches or before != block["quote"] or not block["rich"]:
             status = "stale"
             result = "stale" if block["rich"] else "preserved"
         suggestion_id = str(uuid.uuid4())
-        self.db.execute("""INSERT INTO suggestions (id, project_id, block_id, actor_id, mode, base_revision, before_quote, after_quote, status, result, evidence, decided_by, decided_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
-                        (suggestion_id, project_id, block_id, actor["id"], mode, base_revision, before, after, status, result, json.dumps(evidence_ids)))
+        self.db.execute("""INSERT INTO suggestions (id, project_id, block_id, actor_id, mode, base_revision, base_block_revision,
+                                                     before_quote, after_quote, status, result, evidence, decided_by, decided_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)""",
+                        (suggestion_id, project_id, block_id, actor["id"], mode, base_revision, base_block_revision,
+                         before, after, status, result, json.dumps(evidence_ids)))
         self._audit(actor["id"], "propose", project_id, {"suggestion": suggestion_id, "mode": mode, "kind": actor["kind"], "result": result})
         self.db.commit()
         return self._suggestion(suggestion_id)
@@ -443,7 +582,8 @@ class Service:
     def _suggestion_view(self, row):
         return {"id": row["id"], "project_id": row["project_id"], "block_id": row["block_id"], "actor_id": row["actor_id"],
                 "actor_name": row["actor_name"], "actor_kind": row["actor_kind"], "mode": row["mode"],
-                "base_revision": row["base_revision"], "before": row["before_quote"], "after": row["after_quote"],
+                "base_revision": row["base_revision"], "base_block_revision": row["base_block_revision"],
+                "before": row["before_quote"], "after": row["after_quote"],
                 "status": row["status"], "result": row["result"], "evidence_ids": json.loads(row["evidence"]),
                 "decided_by": row["decided_by"]}
 
@@ -460,28 +600,42 @@ class Service:
         if suggestion["status"] != "pending":
             raise ServiceError(409, "This suggestion is " + suggestion["status"] + ".")
         block = self._block_row(project_id, suggestion["block_id"])
-        if suggestion["before_quote"] != block["quote"]:
+        if suggestion["base_block_revision"] != block["revision"] or suggestion["before_quote"] != block["quote"]:
             self._set_suggestion(suggestion_id, "stale", "stale", actor["id"])
             self.db.commit()
             raise ServiceError(409, "Another change reached this block first. The suggestion is stale and was not merged.")
+        proposer_row = self.db.execute("SELECT * FROM actors WHERE id = ?", (suggestion["actor_id"],)).fetchone()
+        try:
+            proposer = self._actor(proposer_row)
+            role = self.require(proposer, project_id, "propose")
+            error = self._block_proposal_error(proposer, role, block, ai_enabled=True)
+            if error:
+                raise ServiceError(403, error)
+        except ServiceError as error:
+            self._set_suggestion(suggestion_id, "revoked", "revoked", actor["id"])
+            self.db.commit()
+            raise ServiceError(409, "The proposer no longer has permission to edit this block.") from error
         file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?", (project_id, block["path"])).fetchone()
         previous = self._blocks(project_id, block["path"])
-        result = self._node({"op": "apply", "text": file_row["current"], "previous": previous, "stableId": suggestion["block_id"],
-                              "after": suggestion["after_quote"], "root": bool(file_row["is_root"])})
+        result = self._apply_cell_source(file_row["current"], previous, suggestion["block_id"],
+                                         suggestion["after_quote"], bool(file_row["is_root"]))
         if not result.get("ok"):
             self._set_suggestion(suggestion_id, "needs-review", "needs-review", actor["id"])
             self.db.commit()
             raise ServiceError(409, result.get("error") or "This change needs review.")
-        self.db.execute("UPDATE files SET current = ?, dirty = 1 WHERE project_id = ? AND path = ?", (result["text"], project_id, block["path"]))
-        self._replace_blocks(project_id, block["path"], result["blocks"])
-        revision = self._touch(project_id)
-        self._set_suggestion(suggestion_id, "accepted", "accepted", actor["id"])
-        self.db.execute("""UPDATE suggestions SET status = 'stale', result = 'stale'
-                           WHERE project_id = ? AND block_id = ? AND status = 'pending' AND id != ?""",
-                        (project_id, suggestion["block_id"], suggestion_id))
-        self._audit(actor["id"], "accept", project_id, {"suggestion": suggestion_id, "revision": revision, "mode": suggestion["mode"]})
-        self.db.commit()
+        with self.db:
+            self.db.execute("UPDATE files SET current = ?, dirty = 1 WHERE project_id = ? AND path = ?",
+                            (result["text"], project_id, block["path"]))
+            revision = self._touch(project_id)
+            self._replace_blocks(project_id, block["path"], result["blocks"], previous, revision, {suggestion["block_id"]})
+            self._set_suggestion(suggestion_id, "accepted", "accepted", actor["id"])
+            self._stale_proposals(project_id, suggestion["block_id"])
+            self._audit(actor["id"], "accept", project_id, {"suggestion": suggestion_id, "revision": revision, "mode": suggestion["mode"]})
         return self._suggestion(suggestion_id)
+
+    def _apply_cell_source(self, text, previous, stable_id, source, is_root):
+        return self._node({"op": "apply", "text": text, "previous": previous,
+                           "stableId": stable_id, "after": source, "root": is_root})
 
     def reject(self, actor, project_id, suggestion_id):
         self.require(actor, project_id, "decide")
@@ -499,26 +653,93 @@ class Service:
         self.db.execute("UPDATE suggestions SET status = ?, result = ?, decided_by = ?, decided_at = ? WHERE id = ?",
                         (status, result, decided_by, self.now(), suggestion_id))
 
-    def move_block(self, actor, project_id, stable_id, to_offset):
-        self.require(actor, project_id, "propose")
+    def _stale_proposals(self, project_id, block_id):
+        self.db.execute("""UPDATE suggestions SET status = 'stale', result = 'stale'
+                           WHERE project_id = ? AND block_id = ? AND status = 'pending'""", (project_id, block_id))
+
+    def _revoke_proposals(self, project_id, actor_id):
+        self.db.execute("""UPDATE suggestions SET status = 'revoked', result = 'revoked'
+                           WHERE project_id = ? AND actor_id = ? AND status = 'pending'""", (project_id, actor_id))
+
+    def move_block(self, actor, project_id, stable_id, to_offset=None, *, neighbor_id=None, direction=None,
+                   base_block_revision=None, base_neighbor_revision=None):
+        self.require(actor, project_id, "structure")
         block = self._block_row(project_id, stable_id)
-        file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?", (project_id, block["path"])).fetchone()
+        if not block["rich"]:
+            raise ServiceError(409, "Preserved LaTeX cannot be moved as a block.")
+        relative = any(value is not None for value in (neighbor_id, direction, base_neighbor_revision))
+        if relative or base_block_revision is not None:
+            self._require_cell_revision(block, base_block_revision)
         previous = self._blocks(project_id, block["path"])
+        if relative:
+            if to_offset is not None or not isinstance(neighbor_id, str) or direction not in ("before", "after"):
+                raise ServiceError(400, "Choose another cell and move before or after it.")
+            positions = {item["stableId"]: index for index, item in enumerate(previous)}
+            if neighbor_id == stable_id or neighbor_id not in positions:
+                raise ServiceError(400, "Choose another cell in the same source file.")
+            neighbor_index = positions[neighbor_id]
+            neighbor = previous[neighbor_index]
+            self._require_cell_revision(neighbor, base_neighbor_revision)
+            if positions[stable_id] == neighbor_index + (-1 if direction == "before" else 1):
+                raise ServiceError(409, "This cell already sits at that destination.")
+            to_offset = neighbor["from"] if direction == "before" else neighbor["to"]
+        elif type(to_offset) is not int:
+            raise ServiceError(400, "Provide a numeric destination offset.")
+        file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?", (project_id, block["path"])).fetchone()
         result = self._node({"op": "move", "text": file_row["current"], "previous": previous, "stableId": stable_id,
-                              "toOffset": int(to_offset), "root": bool(file_row["is_root"])})
+                              "toOffset": to_offset, "exact": relative, "root": bool(file_row["is_root"])})
         if not result.get("ok"):
             raise ServiceError(409, result.get("error") or "The move needs review.")
-        self.db.execute("UPDATE files SET current = ?, dirty = 1 WHERE project_id = ? AND path = ?", (result["text"], project_id, block["path"]))
-        self._replace_blocks(project_id, block["path"], result["blocks"])
-        revision = self._touch(project_id)
-        self.db.execute("UPDATE suggestions SET status = 'stale', result = 'stale' WHERE project_id = ? AND block_id = ? AND status = 'pending'",
-                        (project_id, stable_id))
-        self._audit(actor["id"], "move", project_id, {"block": stable_id, "revision": revision})
-        self.db.commit()
+        with self.db:
+            self.db.execute("UPDATE files SET current = ?, dirty = 1 WHERE project_id = ? AND path = ?",
+                            (result["text"], project_id, block["path"]))
+            revision = self._touch(project_id)
+            self._replace_blocks(project_id, block["path"], result["blocks"], previous, revision, {stable_id})
+            self._stale_proposals(project_id, stable_id)
+            detail = {"block": stable_id, "revision": revision}
+            if relative:
+                detail.update({"neighbor": neighbor_id, "direction": direction})
+            self._audit(actor["id"], "move", project_id, detail)
         return {"stableId": stable_id, "revision": revision, "unresolved": result.get("unresolved") or []}
+
+    def _require_cell_revision(self, block, expected):
+        if type(expected) is not int or expected < 1:
+            raise ServiceError(400, "Provide the revision you saw for the cell.")
+        if block["revision"] != expected:
+            raise ServiceError(409, "A cell changed since you opened it. Refresh and try again.")
+
+    def insert_cell(self, actor, project_id, neighbor_id, direction, kind, source, base_neighbor_revision):
+        self.require(actor, project_id, "structure")
+        if direction not in ("before", "after") or not isinstance(neighbor_id, str):
+            raise ServiceError(400, "Choose a cell and insert before or after it.")
+        if kind not in ("paragraph", "heading") or not isinstance(source, str) or not source.strip():
+            raise ServiceError(400, "Provide a paragraph or LaTeX heading.")
+        neighbor = self._block_row(project_id, neighbor_id)
+        self._require_cell_revision(neighbor, base_neighbor_revision)
+        path = neighbor["path"]
+        file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?", (project_id, path)).fetchone()
+        previous = self._blocks(project_id, path)
+        result = self._node({"op": "insert", "text": file_row["current"], "previous": previous, "neighborId": neighbor_id,
+                             "direction": direction, "kind": kind, "source": source, "root": bool(file_row["is_root"])})
+        if not result.get("ok"):
+            raise ServiceError(409, result.get("error") or "The inserted cell needs review.")
+        stable_id = result["stableId"]
+        with self.db:
+            self.db.execute("UPDATE files SET current = ?, dirty = 1 WHERE project_id = ? AND path = ?",
+                            (result["text"], project_id, path))
+            revision = self._touch(project_id)
+            self._replace_blocks(project_id, path, result["blocks"], previous, revision, {stable_id})
+            self._audit(actor["id"], "insert-cell", project_id,
+                        {"block": stable_id, "neighbor": neighbor_id, "direction": direction, "revision": revision})
+        return {"stableId": stable_id, "revision": revision, "path": path}
 
     def create_anchor(self, actor, project_id, block_id):
         self.require(actor, project_id, "comment")
+        with self.db:
+            anchor_id = self._insert_anchor(actor, project_id, block_id)
+        return self._anchor_view(project_id, self.db.execute("SELECT * FROM anchors WHERE id = ?", (anchor_id,)).fetchone())
+
+    def _insert_anchor(self, actor, project_id, block_id):
         block = self._block_row(project_id, block_id)
         project = self.db.execute("SELECT revision FROM projects WHERE id = ?", (project_id,)).fetchone()
         anchor_id = str(uuid.uuid4())
@@ -526,14 +747,16 @@ class Service:
                            VALUES (?, ?, ?, ?, ?, ?, 0)""",
                         (anchor_id, project_id, block_id, block["quote"], actor["id"], project["revision"]))
         self._audit(actor["id"], "anchor", project_id, {"anchor": anchor_id, "block": block_id})
-        self.db.commit()
-        return self._anchor_view(project_id, self.db.execute("SELECT * FROM anchors WHERE id = ?", (anchor_id,)).fetchone())
+        return anchor_id
 
     def _anchor_view(self, project_id, row):
-        blocks = self._blocks(project_id)
-        resolved = self._node({"op": "resolve", "blocks": blocks, "anchor": {"blockId": row["block_id"], "quote": row["quote"]}})
+        # The block identity is unique in the project. A changed passage requires review.
+        block = self.db.execute("SELECT quote, path FROM blocks WHERE project_id = ? AND stable_id = ?",
+                                (project_id, row["block_id"])).fetchone()
+        exact = block is not None and block["quote"] == row["quote"]
+        status = "exact" if exact else "unresolved"
         return {"id": row["id"], "block_id": row["block_id"], "quote": row["quote"], "dismissed": bool(row["dismissed"]),
-                "status": "dismissed" if row["dismissed"] else resolved["status"], "path": resolved.get("path")}
+                "status": "dismissed" if row["dismissed"] else status, "path": block["path"] if exact else None}
 
     def dismiss_anchor(self, actor, project_id, anchor_id):
         self.require(actor, project_id, "dismiss")
@@ -547,14 +770,24 @@ class Service:
         anchor = self.db.execute("SELECT id FROM anchors WHERE id = ? AND project_id = ?", (anchor_id, project_id)).fetchone()
         if not anchor:
             raise ServiceError(404, "Unknown anchor.")
-        if not body.strip():
+        with self.db:
+            return self._insert_comment(actor, project_id, anchor_id, body)
+
+    def comment_on_block(self, actor, project_id, block_id, body):
+        self.require(actor, project_id, "comment")
+        with self.db:
+            anchor_id = self._insert_anchor(actor, project_id, block_id)
+            return self._insert_comment(actor, project_id, anchor_id, body)
+
+    def _insert_comment(self, actor, project_id, anchor_id, body):
+        if not isinstance(body, str) or not body.strip():
             raise ServiceError(400, "A comment needs text.")
+        body = body.strip()
         comment_id = str(uuid.uuid4())
         self.db.execute("INSERT INTO comments (id, project_id, anchor_id, actor_id, body, status, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)",
-                        (comment_id, project_id, anchor_id, actor["id"], body.strip(), self.now()))
+                        (comment_id, project_id, anchor_id, actor["id"], body, self.now()))
         self._audit(actor["id"], "comment", project_id, {"comment": comment_id, "anchor": anchor_id})
-        self.db.commit()
-        return {"id": comment_id, "anchor_id": anchor_id, "body": body.strip(), "status": "open"}
+        return {"id": comment_id, "anchor_id": anchor_id, "body": body, "status": "open"}
 
     def resolve_comment(self, actor, project_id, comment_id):
         self.require(actor, project_id, "decide")
@@ -684,6 +917,64 @@ class Service:
         self.require(actor, project_id, "read")
         return zip_bytes(self._export_map(project_id))
 
+    def preview_source(self, actor, project_id, *, root=None, drafts=None):
+        self.require(actor, project_id, "read")
+        if drafts is not None and not isinstance(drafts, list):
+            raise ServiceError(400, "Provide a list of draft cells to preview.")
+        roots = [row["path"] for row in self._rows("""SELECT path FROM files WHERE project_id = ? AND is_text = 1
+                                                       AND is_root = 1 ORDER BY path""", (project_id,))
+                 if Path(row["path"]).suffix.lower() in {".tex", ".ltx"}]
+        if root is not None and root not in roots:
+            raise ServiceError(400, "Choose a manuscript root from this project.")
+        if not roots:
+            raise ServiceError(409, "This project has no manuscript root to preview.")
+        if root is None:
+            root = min(roots, key=lambda path: (path.lower() != "main.tex", Path(path).name.lower() != "main.tex", path))
+
+        updates = self._preview_drafts(actor, project_id, drafts) if drafts else {}
+        files = self._export_map(project_id)
+        revision = self.db.execute("SELECT revision FROM projects WHERE id = ?", (project_id,)).fetchone()["revision"]
+        draft_count = 0
+        for path, edits in updates.items():
+            text = files[path].decode("utf-8")
+            previous = self._blocks(project_id, path)
+            for block, source in sorted(edits, key=lambda edit: edit[0]["start"]):
+                result = self._apply_cell_source(text, previous, block["stable_id"], source, path in roots)
+                if not result.get("ok"):
+                    raise ServiceError(409, result.get("error") or "A draft cannot be previewed as a cell.")
+                text, previous = result["text"], result["blocks"]
+                draft_count += 1
+            files[path] = text.encode("utf-8")
+        return zip_bytes(files), root, revision, draft_count
+
+    def _preview_drafts(self, actor, project_id, drafts):
+        role = self.require(actor, project_id, "propose")
+        seen = set()
+        updates = {}
+        for draft in drafts:
+            if not isinstance(draft, dict):
+                raise ServiceError(400, "Provide a cell and its draft LaTeX to preview.")
+            stable_id, source = draft.get("block_id"), draft.get("source")
+            if not isinstance(stable_id, str) or not isinstance(source, str):
+                raise ServiceError(400, "Provide a cell and its draft LaTeX to preview.")
+            if stable_id in seen:
+                raise ServiceError(400, "Provide only one preview draft per cell.")
+            seen.add(stable_id)
+            block = self._block_row(project_id, stable_id)
+            if not block["rich"]:
+                raise ServiceError(409, "Preview edits require an editable cell.")
+            error = self._block_proposal_error(actor, role, block, ai_enabled=True)
+            if error:
+                raise ServiceError(403, error)
+            self._require_cell_revision(block, draft.get("base_block_revision"))
+            try:
+                source.encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise ServiceError(400, "A draft must be valid UTF-8 text.") from error
+            if source != block["quote"]:
+                updates.setdefault(block["path"], []).append((block, source))
+        return updates
+
     def _export_map(self, project_id):
         files = {}
         for row in self._rows("SELECT path, original, current, is_text, dirty FROM files WHERE project_id = ?", (project_id,)):
@@ -748,28 +1039,25 @@ class Service:
 
     def restore(self, actor, blob):
         self.require(actor, None, "restore")
-        probe = sqlite3.connect(":memory:")
-        try:
-            probe.deserialize(blob) if hasattr(probe, "deserialize") else None
-        finally:
-            probe.close()
-        # Validate by opening a temporary copy and reading the policy table.
-        handle, name = tempfile.mkstemp(suffix=".sqlite")
-        os.close(handle)
-        Path(name).write_bytes(blob)
-        check = sqlite3.connect(name)
-        try:
-            check.execute("SELECT allow_ai FROM policy").fetchone()
-        except sqlite3.Error as error:
-            check.close()
-            Path(name).unlink(missing_ok=True)
-            raise ServiceError(400, "That backup is not a PaperColab database.") from error
-        check.close()
-        self.db.close()
-        shutil.copyfile(name, self.path)
-        Path(name).unlink(missing_ok=True)
-        self.db = sqlite3.connect(self.path, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
+        with tempfile.TemporaryDirectory(dir=self.path.parent, prefix=".restore-") as temporary:
+            incoming = Path(temporary) / "database.sqlite"
+            incoming.write_bytes(blob)
+            incoming.chmod(0o600)
+            try:
+                with closing(self._connect(incoming)) as check:
+                    check.execute("SELECT allow_ai FROM policy").fetchone()
+                    check.execute("SELECT id FROM actors LIMIT 1").fetchone()
+                    self._schema(check)
+                    if not self.demo and any(check.execute("SELECT 1 FROM actors WHERE token_hash = ?", (_credential_hash(key),)).fetchone()
+                                             for _, _, key, _, _ in DEMO_ACTORS):
+                        raise ServiceError(400, "Restore this demo backup in local demo mode.")
+            except sqlite3.Error as error:
+                raise ServiceError(400, "That backup is not a PaperColab database.") from error
+            self.db.close()
+            try:
+                os.replace(incoming, self.path)
+            finally:
+                self.db = self._connect(self.path)
         self._audit(actor["id"], "restore", None, {"bytes": len(blob)})
         self.db.commit()
         return {"restored": True}
@@ -809,14 +1097,30 @@ class Service:
         if tool == "read_block":
             self.require(actor, arguments["project"], "read")
             row = self._block_row(arguments["project"], arguments["block"])
-            return {"stableId": row["stable_id"], "path": row["path"], "kind": row["kind"], "quote": row["quote"]}
+            return {"stableId": row["stable_id"], "path": row["path"], "kind": row["kind"], "quote": row["quote"],
+                    "revision": row["revision"], "allow_ai": bool(row["allow_ai"])}
         if tool == "comment":
-            anchor = self.create_anchor(actor, arguments["project"], arguments["block"])
-            return self.comment(actor, arguments["project"], anchor["id"], arguments.get("body") or "")
+            return self.comment_on_block(actor, arguments["project"], arguments["block"], arguments.get("body") or "")
         if tool == "propose":
             return self.propose(actor, arguments["project"], arguments["block"], arguments["base_revision"],
-                                arguments["before"], arguments["after"], arguments.get("mode") or "source", arguments.get("evidence_ids"))
+                                arguments["before"], arguments["after"], arguments.get("mode") or "source", arguments.get("evidence_ids"),
+                                base_block_revision=arguments.get("base_block_revision"))
         raise ServiceError(404, "Unknown tool. Available tools: list_projects, list_blocks, read_block, comment, propose.")
+
+
+def _credential_hash(token):
+    return sha256(token.encode()).digest()
+
+
+def _starter_manuscript(title):
+    escapes = {character: "\\" + character for character in "#$%&_{}"}
+    escapes.update({"\\": r"\textbackslash{}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"})
+    title = " ".join(title.split()).translate(str.maketrans(escapes))
+    return ("\\documentclass{article}\n"
+            "\\begin{document}\n"
+            f"\\section*{{{title}}}\n\n"
+            "Write the first paragraph of your manuscript here.\n\n"
+            "\\end{document}\n").encode()
 
 
 def bib_entries(text):

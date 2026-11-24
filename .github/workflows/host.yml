@@ -1,0 +1,38 @@
+name: Verify hosted workspace
+on: [pull_request, workflow_dispatch]
+permissions:
+  contents: read
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PAPERCOLAB_OPERATOR_TOKEN: test-only-operator-key-for-container-verification
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build runtime and create a project
+        run: |
+          docker build -t papercolab-ci .
+          docker volume create papercolab-test-data
+          docker run -d --name papercolab-test -p 127.0.0.1:8787:8787 \
+            -e PAPERCOLAB_OPERATOR_TOKEN -v papercolab-test-data:/var/lib/papercolab papercolab-ci
+          curl --retry 15 --retry-connrefused --retry-delay 1 --max-time 3 --fail-with-body http://127.0.0.1:8787/api/health
+          curl --fail-with-body -c /tmp/papercolab-cookies -H 'Content-Type: application/json' \
+            -d "{\"token\":\"$PAPERCOLAB_OPERATOR_TOKEN\"}" http://127.0.0.1:8787/api/session
+          curl --fail-with-body -b /tmp/papercolab-cookies -H 'Origin: http://127.0.0.1:8787' \
+            -H 'Content-Type: application/json' -d '{"title":"Hosted verification","example":true}' \
+            http://127.0.0.1:8787/api/projects | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["blocks"]'
+      - name: Replace the container and verify the session and project persist
+        run: |
+          docker rm -f papercolab-test
+          docker run -d --name papercolab-test -p 127.0.0.1:8787:8787 \
+            -v papercolab-test-data:/var/lib/papercolab papercolab-ci
+          curl --retry 15 --retry-connrefused --retry-delay 1 --max-time 3 --fail-with-body http://127.0.0.1:8787/api/health
+          curl --fail-with-body -b /tmp/papercolab-cookies http://127.0.0.1:8787/api/projects \
+            | python3 -c 'import json,sys; assert [p["title"] for p in json.load(sys.stdin)] == ["Hosted verification"]'
+      - name: Inspect the container on failure
+        if: failure()
+        run: docker logs papercolab-test

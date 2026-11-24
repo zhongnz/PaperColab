@@ -1,0 +1,36 @@
+name: Verify Gate 1 manuscript corpus
+on: workflow_dispatch
+permissions:
+  contents: read
+concurrency:
+  group: gate-1-corpus
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    env:
+      TEXLIVE_PIN: texlive/texlive@sha256:dbd65d778eb83de9b45fb0a8deb3afe44cbbaba2272e4e644e94dda52c7109
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils
+      - name: Install the pinned TeX Live image
+        run: |
+          docker pull "$TEXLIVE_PIN"
+          docker tag "$TEXLIVE_PIN" texlive/texlive:TL2025-historic
+      - name: Inspect, round-trip and compile the corpus
+        run: python corpus/run.py --require-passes 18 --report build/corpus/report.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: gate-1-corpus-report
+          path: build/corpus/report.json
+          if-no-files-found: ignore

@@ -68,7 +68,7 @@ test('source and visual modes protect citation and math tokens until explicitly 
   const t = tex`Measured $x$ following \cite{a}.`;
   const f = B.parseFile(t), p = f.blocks[0], removed = clone(p.rich);
   removed.content[0].content = removed.content[0].content.filter(n => n.type !== 'texToken');
-  assert.throws(() => B.editVisual(f, p, removed), /citation and math/);
+  assert.throws(() => B.editVisual(f, p, removed), /protected LaTeX tokens/);
   assert.equal(B.current(f, p), t);
   B.editSource(f, p, tex`See \cite{b} and $y$.`);
   assert.deepEqual(B.tokens(B.rich(f, p)), [tex`\cite{b}`, '$y$']);
@@ -80,9 +80,85 @@ test('source and visual modes protect citation and math tokens until explicitly 
   assert.equal(f.edits.size, 0);
 });
 
+test('visual edits preserve complete citations, footnotes and literal URLs', () => {
+  const citation = tex`\citep*[see, \emph{for example}][p.~3]{mcmc,` + '\r\n' + 'chain}';
+  const alias = tex`\citet[][hereafter \citetalias{paper}]{paper}`;
+  const url = tex`\url{https://example.invalid/path_(item)?a=2&b=3#results}`;
+  const footnote = tex`\footnote[ 12 ]{At ` + url + tex` compare $x^2$ and \textit{the previous note}.}`;
+  const source = `See ${citation} and ${alias}${footnote}. More at ${url}.`;
+  const file = B.parseFile(source);
+  assert.deepEqual(file.blocks.map(block => block.kind), ['paragraph']);
+  const [paragraph] = file.blocks;
+  assert.deepEqual(B.tokens(paragraph.rich), [citation, alias, footnote, url]);
+  const edited = append(paragraph.rich, ' Revised.');
+  B.editVisual(file, paragraph, edited);
+  assert.equal(B.exportText(file), source + ' Revised.');
+  const reimported = B.parseFile(B.exportText(file));
+  assert.deepEqual(B.tokens(reimported.blocks[0].rich), [citation, alias, footnote, url]);
+  const changedToken = clone(edited);
+  changedToken.content[0].content.find(node => node.type === 'texToken').attrs.latex = tex`\cite{other}`;
+  assert.throws(() => B.editVisual(file, paragraph, changedToken), /protected LaTeX tokens/);
+  B.editSource(file, paragraph, `See ${footnote.replace('At ', 'From ')} now.`);
+  assert.deepEqual(B.tokens(B.rich(file, paragraph)), [footnote.replace('At ', 'From ')]);
+});
+
+test('updates run-in headings and noindent prose while preserving structural prefixes', () => {
+  const source = tex`\paragraph* {Run-in heading}` + '\r\n\r\n' + tex`\noindent` + '\r\n  Body text.' + '\r\n';
+  const file = B.parseFile(source);
+  assert.deepEqual(file.blocks.map(block => block.kind), ['heading', 'paragraph']);
+  const [heading, paragraph] = file.blocks;
+  assert.equal(B.preview(paragraph.rich), 'Body text.');
+  B.editVisual(file, heading, append(heading.rich, ' revised'));
+  B.editVisual(file, paragraph, append(paragraph.rich, ' Revised.'));
+  assert.equal(B.exportText(file), source.replace('heading}', 'heading revised}').replace('text.', 'text. Revised.'));
+  B.editSource(file, paragraph, tex`\noindent` + '\n  New body text.');
+  assert.equal(B.current(file, paragraph), tex`\noindent` + '\r\n  New body text.');
+  assert.throws(() => B.editSource(file, paragraph, 'Remove the layout command.'), /one supported paragraph/);
+  assert.throws(() => B.editSource(file, heading, tex`\section{Other heading}`), /one supported heading/);
+});
+
+test('isolates balanced top-level TeX groups and skipped conditionals byte for byte', () => {
+  const conditional = [tex`\iffalse`, tex`  \begin{figure} Some hidden TeX \end{figure}`,
+    tex`\iffalse`, tex`Nested \unknown{  code }.`, tex`\fi`, tex`\fi`].join('\r\n');
+  const group = [tex`\begingroup`, tex`\allowdisplaybreaks   `,
+    tex`\begin{align}x &= 2\end{align}`, tex`\endgroup`].join('\r\n');
+  const sentence = tex`Another sentence, see \cref{fig:result}.`;
+  const source = ['First text.', '', conditional, '', sentence, group, '', 'Last text.'].join('\r\n');
+  const file = B.parseFile(source);
+  assert.deepEqual(file.blocks.map(block => block.kind), ['paragraph', 'raw', 'paragraph', 'raw', 'paragraph']);
+  const raw = parsed => parsed.blocks.filter(block => !block.rich).map(block => B.current(parsed, block));
+  assert.deepEqual(raw(file), [conditional, group]);
+  B.editVisual(file, file.blocks[2], append(file.blocks[2].rich, ' More prose.'));
+  const exported = B.exportText(file);
+  assert.equal(exported, source.replace(sentence, sentence + ' More prose.'));
+  assert.deepEqual(raw(B.parseFile(exported)), [conditional, group]);
+});
+
+test('retains whole files when a control region crosses an uncertain boundary', () => {
+  const regions = [
+    [tex`\iffalse`, 'Never closed.'],
+    [tex`\iffalse`, tex`\begin{figure}\fi\end{figure}`, tex`\fi`, '', 'Trailing prose.'],
+    [tex`\iffalse`, tex`\else`, 'Enabled branch.', tex`\fi`, '', 'Trailing prose.'],
+    [tex`\custom`, tex`\begingroup`, 'Unknown argument.', tex`\endgroup`, '', 'Trailing prose.'],
+    [tex`\custom{one}`, tex`\begingroup`, 'Another unknown argument.', tex`\endgroup`, '', 'Trailing prose.'],
+    [tex`\begingroup`, 'The next line continues.', tex`\endgroup`, 'Adjacent prose.']
+  ];
+  for (const region of regions) {
+    const source = ['First text.', '', ...region].join('\n');
+    const file = B.parseFile(source);
+    assert.deepEqual(file.blocks.map(block => block.kind), ['raw']);
+    assert.equal(B.exportText(file), source);
+    assert.equal(B.current(file, file.blocks[0]), source);
+  }
+});
+
 test('preserves uncertain grammar, unsupported constructs and over-limit UTF-8 as raw source', () => {
   const cases = [tex`\iftrue x\fi`, tex`\catcode`, 'orphan {', tex`\custom{keep}`,
-    tex`\begin{align}x &= 2\end{align}`, '界'.repeat(180000)];
+    tex`\begin{align}x &= 2\end{align}`, '界'.repeat(180000),
+    tex`A note\footnote{\custom{detail}} stays here.`, tex`A note\footnote[\1]{detail} stays here.`,
+    tex`See \citep[\custom{note}]{key}.`, tex`See \citep[unfinished{key}.`,
+    tex`A \url{https://example.invalid/\unknown} stays here.`, tex`A \noindent command in mid-paragraph.`,
+    tex`\newcommand{\headline}[1]` + '\n' + tex`\paragraph{A macro argument}`];
   for (const s of cases) {
     const f = B.parseFile(s);
     assert.ok(f.blocks.length && f.blocks.every(b => b.kind === 'raw'));
@@ -130,8 +206,8 @@ test('an untouched ZIP is byte-identical and a changed ZIP preserves paths, sibl
 test('coverage counts editable blocks and names the command that preserved a paragraph', () => {
   const source = [
     '\\section{Methods}', '', 'Supported prose.', '',
-    'A note\\footnote{detail} stays here.', '',
-    'See \\cite[p.~3]{key}.', '',
+    tex`A note\footnote{\custom{detail}} stays here.`, '',
+    tex`See \citep[\unknown{note}]{key}.`, '',
     '\\begin{tabular}{c}', 'a', '\\end{tabular}'
   ].join('\n');
   const file = B.parseFile(source);
@@ -143,7 +219,7 @@ test('coverage counts editable blocks and names the command that preserved a par
   assert.equal(report.editableBlocks, 2);
   const commands = Object.fromEntries(report.fallbackCommands.map(item => [item.command, item.blocks]));
   assert.equal(commands.footnote, 1);
-  assert.equal(commands.cite, 1);
+  assert.equal(commands.citep, 1);
 });
 
 test('editing prose preserves multiline math tokens, textit semantics and raw macro definitions', () => {

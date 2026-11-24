@@ -2,7 +2,9 @@
   "name": "papercolab",
   "private": true,
   "license": "Apache-2.0",
-  "scripts": { "build:vendor": "node scripts/build-vendor.mjs" },
+  "scripts": {
+    "build:vendor": "node scripts/build-vendor.mjs"
+  },
   "dependencies": {
     "@codemirror/commands": "6.10.3",
     "@codemirror/language": "6.12.3",
@@ -11,7 +13,10 @@
     "@codemirror/view": "6.41.0",
     "@tiptap/core": "3.35.0",
     "@tiptap/pm": "3.35.0",
-    "@unified-latex/unified-latex-util-pegjs": "1.8.4"
+    "@unified-latex/unified-latex-util-pegjs": "1.8.4",
+    "katex": "0.19.1"
   },
-  "devDependencies": { "esbuild": "0.28.2" }
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
 }

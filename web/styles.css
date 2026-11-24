@@ -110,6 +110,8 @@ button:disabled{cursor:default;opacity:.46}
 .visual-prose{min-height:145px;padding:20px 22px;outline:none;white-space:pre-wrap;overflow-wrap:anywhere;font:1.17rem/1.73 Georgia,serif}
 .visual-prose:focus{box-shadow:inset 0 0 0 2px #648d75}.visual-prose p{margin:0}
 .tex-token{display:inline;padding:0 3px;border:1px solid #cadae0;background:#eff4f4;color:#315d59;border-radius:3px;font:.78em/1.4 var(--mono);overflow-wrap:anywhere}
+.tex-token.tex-math{font:inherit;padding:0 2px;overflow-wrap:normal}
+.math-preview{overflow:auto;margin:12px 0}
 .source-section{margin-top:17px;background:#fcfcf8}.source-section .pane-header{background:#edf1e9}
 #source-surface .cm-editor{max-height:42vh;min-height:96px;font:.83rem/1.65 var(--mono)}
 #source-surface .cm-scroller{overflow:auto;font-family:inherit}

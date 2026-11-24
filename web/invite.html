@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Join a project · PaperColab</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="mast"><div class="mast-inner">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>PaperColab</a>
+  </div></header>
+  <main>
+    <section class="panel" aria-labelledby="invite-heading">
+      <h1 id="invite-heading">Join a project</h1>
+      <form id="join" hidden>
+        <div class="project-tools">
+          <label id="name-field">Display name <input id="name" maxlength="120" autocomplete="name"></label>
+          <button type="submit" class="primary">Accept invitation</button>
+        </div>
+      </form>
+      <p id="invite-status" role="status"></p>
+      <div id="recovery" hidden>
+        <p>Save your sign-in key in a password manager. You can use it to return on another device.</p>
+        <div class="project-tools">
+          <label>Sign-in key <input id="recovery-key" type="text" readonly></label>
+          <button id="copy-key" type="button" class="secondary">Copy key</button>
+        </div>
+      </div>
+      <p><a id="workspace-link" href="/">Open PaperColab</a></p>
+    </section>
+  </main>
+  <script src="invite.js"></script>
+</body>
+</html>

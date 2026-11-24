@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: papercolab
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    disk:
+      name: papercolab-data
+      mountPath: /var/lib/papercolab
+      sizeGB: 1
+    envVars:
+      - key: PAPERCOLAB_OPERATOR_TOKEN
+        generateValue: true
+      - key: PAPERCOLAB_SECURE_COOKIES
+        value: "1"

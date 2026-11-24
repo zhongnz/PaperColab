@@ -5,14 +5,38 @@ PaperColab is an open-source project for writing and reviewing scientific manusc
 ## Run the workspace
 
 ```sh
-PAPERCOLAB_DEMO=1 python3 -m server
+PAPERCOLAB_DEMO=1 PAPERCOLAB_DATA=data/demo python3 -m server
 ```
 
-Open http://127.0.0.1:8787/. The demo signs in as Ada (lead and operator), Bao (author), Iris (reviewer) or Quill (assistant). Those tokens exist only for a local demo, and demo mode will not listen on a public address.
+Open http://127.0.0.1:8787/. The demo opens Estuary Field Notes on an editable cell. Choose **Demo role** to switch among Ada (lead and operator), Bao (author), Iris (reviewer) or Quill (assistant). Demo mode listens on a loopback address.
+
+- Choose a file and cell in **Manuscript cells**. Changes in Visual and LaTeX update the same draft. When LaTeX is incomplete, Visual keeps the last valid version while you finish the edit.
+- **Propose cell edit** submits the draft for human review. Unsubmitted drafts stay in this browser when you switch cells or reload. A conflicting accepted edit leaves the draft available for reconciliation.
+- A lead can add a heading or paragraph next to a selected cell, move cells within a file, and assign ownership. You can start with a new manuscript or import a LaTeX project ZIP under **Add or find a project**.
+- Open **Preview manuscript** to read the cells together in manuscript order. Select **Build PDF** to compile the chosen main file with its includes, figures, and bibliography. **Include saved drafts** layers your valid local cell drafts over the accepted revision for preview. A PDF build leaves that revision and the review queue unchanged.
 
 A suggestion, whether it comes from the visual editor, the source editor, or `POST /api/mcp`, is the same review record. It names the person or assistant, the revision they saw, and the block. The manuscript changes only when a human reviewer or lead accepts it. Two overlapping edits of one block both stay pending; accepting one marks the other stale instead of merging the text. A split that stops being one block stays for review. Moving a block keeps its id, so a comment anchor still resolves. A release ZIP and its manifest stay byte-for-byte the same after later draft edits.
 
-The SQLite database is `data/papercolab.sqlite`. An operator can back it up, restore it, turn AI proposals off, set how long unreleased projects are kept, and read the audit log. Without demo mode, the first start prints an operator token. The offline checker remains at http://127.0.0.1:8787/index.html and does not call the service.
+The SQLite database is `data/papercolab.sqlite`. An operator can back it up, restore it, turn AI proposals off, set how long unreleased projects are kept, and read the audit log. Without demo mode, the first start provisions an operator using `PAPERCOLAB_OPERATOR_TOKEN` or writes the initial key to `data/operator-token`. The offline checker remains at http://127.0.0.1:8787/index.html and does not call the service.
+
+## Host a workspace
+
+Deploy the repository with the [Render Blueprint](render.yaml), or build the [container image](Dockerfile) for a Docker host. The blueprint provisions one paid web service with a persistent disk at `/var/lib/papercolab`. Render generates the initial `PAPERCOLAB_OPERATOR_TOKEN` and serves the workspace over HTTPS. Find the key in the service's Environment settings and use it to sign in. The key provisions an operator only when the database is empty.
+
+To check the hosted runtime locally with Docker:
+
+```sh
+docker build -t papercolab .
+docker volume create papercolab-data
+docker run --name papercolab -p 127.0.0.1:8787:8787 \
+  -v papercolab-data:/var/lib/papercolab papercolab
+```
+
+Read the initial key with `docker exec papercolab cat /var/lib/papercolab/operator-token`. A public deployment needs an HTTPS reverse proxy and `PAPERCOLAB_PUBLIC_ORIGIN` set to the external origin. Keep the named volume across deploys and keep operator backups off the host. Run one application instance per SQLite database. Use `/api/health` for the hosting provider's readiness check.
+
+A project lead can create an author, reviewer or reader invitation under **Manage access**. Each link works once and expires after seven days. The person accepting it gets a browser session and a sign-in key they can save for another device. Leads can update or remove project access from the same panel.
+
+For in-app PDF builds, run the workspace on Linux with Bubblewrap, user namespaces, and a system TeX Live installation, or on a host with the TeX Live Docker image already available. `PAPERCOLAB_PDF_RUNNER` accepts `auto` (default), `bubblewrap`, `docker`, and `off`. PDF builds use an isolated workspace with no network. The combined manuscript view works without a compiler.
 
 ## Edit a manuscript
 

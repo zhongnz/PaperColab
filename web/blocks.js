@@ -2,8 +2,10 @@
 (() => {
   'use strict';
   const headingNames = new Set(['section', 'subsection', 'subsubsection']);
+  const runInHeadings = new Set(['paragraph', 'subparagraph']);
   const standalone = new Set(['maketitle', 'tableofcontents', 'appendix', 'clearpage', 'newpage', 'frontmatter', 'mainmatter', 'backmatter']);
-  const inlineRefs = new Set(['cite', 'citep', 'citet', 'ref', 'eqref', 'pageref']);
+  const citationNotes = new Map([['cite', 1], ['citep', 2], ['citet', 2], ['citealt', 2], ['citealp', 2]]);
+  const inlineRefs = new Set(['citepalias', 'citetalias', 'ref', 'eqref', 'pageref', 'cref', 'Cref']);
   const marks = { textbf: 'bold', emph: 'italic', textit: 'italic' };
   const escaped = { '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}', '\u00a0': '~' };
   for (const ch of '#$%&_{}') escaped[ch] = '\\' + ch;
@@ -32,6 +34,47 @@
       }
       return bom + i + lo;
     } };
+  }
+
+  const isString = (node, value) => node?.type === 'string' && node.content === value;
+  const skipWhitespace = (nodes, index) => nodes[index]?.type === 'whitespace' ? index + 1 : index;
+
+  function optionalArgumentEnd(nodes, start) {
+    for (let i = start + 1; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (isString(node, ']')) return i;
+      if (isString(node, '[') || node.type === 'parbreak' || node.type === 'comment') break;
+    }
+    return null;
+  }
+
+  function protectedInlineEnd(nodes, index, slice, depth) {
+    const name = nodes[index].content;
+    const citation = citationNotes.has(name);
+    const footnote = name === 'footnote';
+    if (!citation && !footnote && name !== 'url' && !inlineRefs.has(name)) return null;
+
+    let end = skipWhitespace(nodes, index + 1);
+    if (citation && isString(nodes[end], '*')) end = skipWhitespace(nodes, end + 1);
+    const maxOptional = citationNotes.get(name) ?? Number(footnote);
+    for (let count = 0; count < maxOptional && isString(nodes[end], '['); count++) {
+      const close = optionalArgumentEnd(nodes, end);
+      if (close === null) return null;
+      const valid = footnote
+        ? /^[ \t]*[0-9]+[ \t]*$/.test(slice(nodes[end].position.end.offset, nodes[close].position.start.offset))
+        : asRich(nodes.slice(end + 1, close), slice, depth + 1);
+      if (!valid) return null;
+      end = skipWhitespace(nodes, close + 1);
+    }
+
+    const argument = nodes[end];
+    if (argument?.type !== 'group') return null;
+    const source = slice(argument.position.start.offset, argument.position.end.offset);
+    if (footnote) return asRich(argument.content, slice, depth + 1) ? end : null;
+    // Keep only literal URLs. A command, TeX comment or delimiter may have
+    // effects the generic parser cannot model inside a verbatim URL argument.
+    if (name === 'url') return /^\{[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=-]+\}$/.test(source) ? end : null;
+    return /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(source) ? end : null;
   }
 
   function asRich(nodes, slice, depth = 0, failures = null) {
@@ -65,6 +108,12 @@
       if (name.length === 1 && '#$%&_{}'.includes(name) && raw(node) === '\\' + name) {
         append({ type: 'text', text: name }); continue;
       }
+      const protectedEnd = protectedInlineEnd(nodes, i, slice, depth);
+      if (protectedEnd !== null) {
+        append({ type: 'texToken', attrs: { latex: slice(node.position.start.offset, nodes[protectedEnd].position.end.offset) } });
+        i = protectedEnd;
+        continue;
+      }
       if (next?.type !== 'group' || node.position.end.offset !== next.position.start.offset) return fail(name);
       if (Object.hasOwn(namedEscapes, name) && !next.content.length) {
         append({ type: 'text', text: namedEscapes[name] });
@@ -78,8 +127,6 @@
           child.marks = [...existing, mark].sort((a, b) => a.type.localeCompare(b.type));
           append(child);
         }
-      } else if (inlineRefs.has(name) && /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(raw(next))) {
-        append({ type: 'texToken', attrs: { latex: slice(node.position.start.offset, next.position.end.offset) } });
       } else return fail(name);
       i++;
     }
@@ -111,6 +158,62 @@
   const ambiguous = n => (n.type === 'string' && /[{}$]/.test(n.content)) ||
     (n.type === 'macro' && /^(?:begin|end|if.*|else|fi|or|begingroup|endgroup|bgroup|egroup)$/.test(n.content));
   const isSpace = node => node.type === 'whitespace' || node.type === 'parbreak';
+  const quarantineClosers = new Map([['iffalse', 'fi'], ['begingroup', 'endgroup']]);
+
+  function commandOnOwnLine(node, text) {
+    const from = node.position.start.offset, to = node.position.end.offset;
+    const left = text.lastIndexOf('\n', from - 1) + 1;
+    const nextNewline = text.indexOf('\n', to);
+    const right = nextNewline < 0 ? text.length : nextNewline;
+    return /^[ \t]*$/.test(text.slice(left, from)) && /^[ \t]*$/.test(text.slice(to, right));
+  }
+
+  function containsAmbiguousControl(node, conditional) {
+    const pending = [node];
+    while (pending.length) {
+      const child = pending.pop();
+      if (ambiguous(child) || (conditional && child.type === 'verbatim')) return true;
+      if (Array.isArray(child.content)) for (const item of child.content) pending.push(item);
+    }
+    return false;
+  }
+
+  function quarantineEnd(nodes, index, text, slice) {
+    const opening = nodes[index];
+    const closing = quarantineClosers.get(opening.content);
+    if (!closing || !commandOnOwnLine(opening, text)) return null;
+    // An unsupported command before the start may take the opening command
+    // as an argument. Only separate it from a blank line or supported prose.
+    let start = index;
+    while (start > 0 && nodes[start - 1].type !== 'parbreak') start--;
+    if (!asRich(nodes.slice(start, index), slice)) return null;
+
+    let depth = 1;
+    for (let end = index + 1; end < nodes.length; end++) {
+      const node = nodes[end];
+      if (node.type === 'macro' && node.content === opening.content) { depth++; continue; }
+      if (node.type === 'macro' && node.content === closing) {
+        if (--depth) continue;
+        const after = nodes[end + 1];
+        const isolated = !after || after.type === 'parbreak' || (after.type === 'whitespace' && end + 2 === nodes.length);
+        return isolated && commandOnOwnLine(node, text) ? end : null;
+      }
+      if (containsAmbiguousControl(node, opening.content === 'iffalse')) break;
+    }
+    return null;
+  }
+
+  function quarantineRegions(nodes, text, slice) {
+    const regions = new Map();
+    for (let i = 0; i < nodes.length; i++) {
+      if (!ambiguous(nodes[i])) continue;
+      const end = quarantineEnd(nodes, i, text, slice);
+      if (end === null) return null;
+      regions.set(i, end);
+      i = end;
+    }
+    return regions;
+  }
 
   function parseFile(original, { root = false } = {}) {
     const blocks = [];
@@ -134,7 +237,8 @@
     if (docs.length > 1 || (root && docs.length !== 1)) return rawFile('A single document body could not be identified.');
     const env = docs[0];
     const nodes = env ? env.content : ast.content;
-    if (nodes.some(ambiguous)) return rawFile('A conditional or unmatched delimiter makes the block boundaries uncertain.');
+    const regions = quarantineRegions(nodes, text, slice);
+    if (!regions) return rawFile('A conditional or unmatched delimiter makes the block boundaries uncertain.');
     const start = n => at(n.position.start.offset), end = n => at(n.position.end.offset);
     function represent(nodes) {
       const commands = [];
@@ -151,31 +255,42 @@
       run = [];
       if (!group.length) return;
       const from = start(group[0]), to = end(group.at(-1));
-      const { rich, commands } = represent(group);
-      if (rich?.length) add('paragraph', from, to, { rich: doc(rich), prefix: '', suffix: '' });
+      const leadingNoindent = group[0].type === 'macro' && group[0].content === 'noindent' && group[1]?.type === 'whitespace';
+      const body = leadingNoindent ? group.slice(2) : group;
+      const prefix = leadingNoindent ? original.slice(from, start(body[0])) : '';
+      const { rich, commands } = represent(body);
+      if (rich?.length) add('paragraph', from, to, { rich: doc(rich), prefix, suffix: '' });
       else add('raw', from, to, { label: 'LaTeX source', fallback: 'paragraph', commands });
     }
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i];
+      if (regions.has(i)) {
+        flush();
+        const last = regions.get(i);
+        const label = n.content === 'iffalse' ? 'TeX conditional' : 'TeX group';
+        add('raw', start(n), end(nodes[last]), { label });
+        i = last;
+        continue;
+      }
       if (n.type === 'parbreak') { flush(); continue; }
       if (n.type === 'environment' || n.type === 'verbatim' || n.type === 'mathenv' || n.type === 'displaymath') {
         flush();
         add('raw', start(n), end(n), { label: typeof n.env === 'string' ? n.env : 'Display LaTeX' });
         continue;
       }
-      if (n.type === 'macro' && headingNames.has(n.content)) {
+      if (n.type === 'macro' && (headingNames.has(n.content) || runInHeadings.has(n.content))) {
         // TeX also permits a control sequence to be an unbraced argument, e.g. in a definition.
         const previous = run.findLast(item => !isSpace(item) && item.type !== 'comment');
         const offset = n.position.start.offset;
         const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
-        if ((previous && !/^[ \t]*$/.test(text.slice(lineStart, offset))) ||
+        if ((previous && (runInHeadings.has(n.content) || !/^[ \t]*$/.test(text.slice(lineStart, offset)))) ||
             (previous?.type === 'macro' && !standalone.has(previous.content))) {
           run.push(n);
           continue;
         }
         let j = i + 1;
-        if (nodes[j]?.type === 'string' && nodes[j].content === '*') j++;
-        if (nodes[j]?.type === 'whitespace') j++;
+        if (isString(nodes[j], '*')) j++;
+        j = skipWhitespace(nodes, j);
         const title = nodes[j];
         if (title?.type === 'group') {
           flush();
@@ -205,7 +320,7 @@
   function editVisual(file, block, content) {
     if (!block.rich) throw new Error('This block is preserved as original LaTeX.');
     const prior = rich(file, block);
-    if (!same(tokens(prior), tokens(content))) throw new Error('Edit citation and math expressions in the LaTeX pane.');
+    if (!same(tokens(prior), tokens(content))) throw new Error('Edit protected LaTeX tokens in the source pane.');
     if (serialize(prior) === serialize(content)) return;
     if (serialize(content) === serialize(block.rich)) { file.edits.delete(block.id); return; }
     set(file, block, block.prefix + serialize(content) + block.suffix, content);
@@ -218,10 +333,10 @@
     const parsed = parseFile(source);
     const candidate = parsed.blocks[0];
     if (parsed.blocks.length !== 1 || candidate.kind !== block.kind || candidate.from !== 0 ||
-        candidate.to !== source.length || (block.kind === 'heading' && candidate.prefix !== block.prefix)) {
+        candidate.to !== source.length || coordinates(candidate.prefix).text !== coordinates(block.prefix).text) {
       throw new Error('Keep one supported ' + block.kind + ' in this block. Check the LaTeX commands and delimiters.');
     }
-    set(file, block, source, candidate.rich);
+    set(file, block, block.prefix + source.slice(candidate.prefix.length), candidate.rich);
   }
 
   function exportText(file) {

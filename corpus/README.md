@@ -1,6 +1,34 @@
 # Manuscript regression corpus
 
-[papers.csv](papers.csv) identifies 20 published or publicly posted manuscripts across six cohorts. The links pin an author repository commit or an arXiv source version. A venue label groups papers by publication family. Inspect the actual class and files in each pinned source before claiming template coverage. One manuscript has passed an original-source build. Nineteen await a baseline. The offline editor regression below exercises that first paper. The full week-eight cohort and collaboration trials remain pending.
+[papers.csv](papers.csv) identifies 20 published or publicly posted manuscripts across six cohorts. Each source is pinned to a repository commit or an arXiv version. The manifest records the intended manuscript root, compiler, and measured visual coverage. Venue labels group papers by publication family.
+
+## Check the full corpus
+
+Use Python 3.12 or later and Node 24. The runner downloads pinned source bytes, prepares a ZIP, runs the browser's inspection and block parser, and attempts one visual paragraph edit. It verifies an untouched archive byte for byte, an edited archive outside the chosen range, and quarantined ranges after re-import. If the root has no editable paragraph, it also checks reachable `.tex` and `.ltx` files.
+
+~~~sh
+python3 corpus/run.py --no-build
+python3 corpus/run.py --offline --no-build --paper emcee
+~~~
+
+For the full check, install Docker and `pdftotext` from Poppler. Pull the pinned TeX Live image and tag it for the existing isolated builder.
+
+~~~sh
+PAPERCOLAB_TEX_IMAGE=texlive/texlive@sha256:dbd65d778eb83de9b45fb0a8deb3afe44cbbaba2272e4e644e94dda52c7109
+docker pull "$PAPERCOLAB_TEX_IMAGE"
+docker tag "$PAPERCOLAB_TEX_IMAGE" texlive/texlive:TL2025-historic
+python3 corpus/run.py --require-passes 18
+~~~
+
+The original and edited ZIPs build independently with the same pinned image, engine, and root. The JSON report records separate outcomes for downloading, inspection, the source round trip, each build, and PDF comparison. It includes hashes, page counts, coverage, and diagnostics. The comparison checks that the edit marker appears in the edited PDF alone. It also reports whether extracted text matches after removing that marker. A full pass requires both builds, a passing comparison, and coverage recorded for all reached manuscript sources.
+
+Downloads, ZIPs, PDFs, and JSON reports live in the ignored `corpus/local/gate1/` directory by default. Use `--report PATH` to write the report at a known location. The manual [Gate 1 workflow](../.github/workflows/corpus.yml) runs the same commands and uploads the JSON report.
+
+## Measured source coverage
+
+On 23 November 2026 all 20 sources were downloaded and inspected. Nineteen passed the byte-preserving visual round trip. The editor preserves balanced standalone TeX groups and skipped conditionals as exact source ranges in Denoising Diffusion Probabilistic Models, Generative Adversarial Networks, Model-Agnostic Meta-Learning, and ChainForge. Proximal Policy Optimization v1 packages a PDF and a TeX wrapper for it, with zero editable paragraphs. The pinned MAML and BART archives contain additional `.tex` roots. Their canonical publication roots are `senstive.tex` and `main.tex`, respectively.
+
+Docker was unavailable during that measurement. The historical emcee original-source build is recorded below. The paired isolated PDF checks still need evidence for this run.
 
 ## Reproduce the first published-source check
 
@@ -22,7 +50,7 @@ node corpus/check.cjs corpus/local/emcee.zip
 
 The checker identifies document/ms.tex as the root and follows its local class. It reports one located reference, fourteen TeX-distribution lookups and four macro-generated graphics paths requiring a build. All four point to parameterised figure commands inside the class. There were zero missing literal references in this two-file input. [Pinned source](https://github.com/dfm/emcee/tree/3036b79448cc671d1a1a6c9104b6f0b7c4362850/document)
 
-Each root in the JSON result includes `coverage` for the `.tex` and `.ltx` files reached from that root: editable paragraphs, editable headings, fallback paragraphs, fallback headings, and the commands that kept a paragraph or heading as original LaTeX. Record those fields with the baseline. A paper with a blank coverage record cannot count toward the round-trip target. On 23 November 2026 the pinned `document/ms.tex` had 15 editable paragraphs and 7 editable headings. Fifty paragraph ranges stayed as original LaTeX, and no heading did. The commands recorded on those ranges were `Eq` (1), `Python` (1), `acknowledgments` (1), `acor` (1), `af` (1), `algo` (3), `citealt` (1), `citep` (4), `citet` (1), `citetalias` (4), `clearpage` (2), `eq` (1), `footnote` (1), `keywords` (1), `newcommand` (1), `noindent` (1), `nuisance` (1), `numpy` (1), `paper` (1), `paragraph` (4), `pr` (2), `sect` (2), `sectlabel` (4), `this` (8), `title` (1) and `url` (1). The same counts are in [papers.csv](papers.csv).
+The current editor identifies 22 editable paragraphs and 11 editable headings in the pinned `document/ms.tex`. Forty paragraph ranges and zero headings remain raw. The byte round trip preserves another 22 raw structural blocks in that source. [Coverage and fallback commands](papers.csv)
 
 On 23 November 2026, the isolated pdfLaTeX job produced a 275,608-byte PDF from that source. The TeX Live 2025 image digest was sha256:dbd65d778eb83de9b45fb0a8deb3afe44cbbaba2272e4e1e644e94dda52c7109. This establishes the baseline for a future import and re-export comparison. [Build record](https://github.com/zhongnz/PaperColab/actions/runs/45254301969/job/137971905975)
 

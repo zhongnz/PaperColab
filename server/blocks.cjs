@@ -17,7 +17,8 @@ function run(body) {
     return I.catalogue(file, body.previous || [], body.prefer || null);
   }
   if (body.op === 'apply') return I.applyEdit(body.text, body.previous, body.stableId, body.after, body.root);
-  if (body.op === 'move') return I.moveBlock(body.text, body.previous, body.stableId, body.toOffset, body.root);
+  if (body.op === 'move') return I.moveBlock(body.text, body.previous, body.stableId, body.toOffset, body.root, body.exact);
+  if (body.op === 'insert') return I.insertCell(body.text, body.previous, body.neighborId, body.direction, body.kind, body.source, body.root);
   if (body.op === 'resolve') return I.resolveAnchor(body.blocks, body.anchor);
   throw new Error('Unknown block operation.');
 }

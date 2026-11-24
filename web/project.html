@@ -4,85 +4,189 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src blob:; base-uri 'none'; form-action 'none'">
   <title>Workspace · PaperColab</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="project.css">
 </head>
-<body>
+<body class="project-page">
   <header class="mast"><div class="mast-inner">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span>PaperColab</div>
-    <a class="repo" href="index.html">Offline checker</a>
-    <a class="repo" href="https://github.com/zhongnz/PaperColab" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+    <nav aria-label="PaperColab tools">
+      <a class="repo" href="index.html">Offline checker</a>
+      <a class="repo" href="https://github.com/zhongnz/PaperColab" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
   </div></header>
   <main>
-    <header class="intro">
-      <p class="overline">Research workspace</p>
-      <h1>Work on the project<span class="dot">.</span></h1>
-      <p>Import a manuscript, suggest a change in either editor, and let a person accept it. A release stays put after the draft moves on.</p>
+    <header class="workspace-bar">
+      <h1>Manuscript workspace</h1>
+      <div class="workspace-account">
+        <label id="demo-actor" hidden>Demo role <select id="actor"></select></label>
+        <label id="token-label">Sign-in key <input id="token" type="password" autocomplete="off" spellcheck="false"></label>
+        <button type="button" class="secondary" id="use-token">Sign in</button>
+        <button type="button" class="secondary" id="sign-out" hidden>Sign out</button>
+        <span id="who" role="status"></span>
+      </div>
     </header>
-    <div class="project-tools">
-      <label>Signed in as <select id="actor"></select></label>
-      <label>Token <input id="token" autocomplete="off" spellcheck="false"></label>
-      <button type="button" class="secondary" id="use-token">Use token</button>
-      <span id="who" role="status"></span>
-    </div>
     <p id="status" role="status" class="muted"></p>
     <div id="error" role="alert" hidden></div>
-    <section class="panel" aria-labelledby="projects-heading">
-      <h2 id="projects-heading">Projects</h2>
-      <div class="project-tools">
-        <label>Title <input id="new-title" value="New manuscript"></label>
-        <button type="button" class="primary" id="create">Create project</button>
-        <button type="button" class="secondary" id="example">Open the estuary example</button>
-        <label class="secondary" style="padding:10px 17px;border-radius:5px">Import ZIP <input id="zip" type="file" accept=".zip,application/zip" hidden></label>
+    <section id="projects" class="project-picker" aria-labelledby="projects-heading" hidden>
+      <div class="project-picker-row">
+        <h2 id="projects-heading">Projects</h2>
+        <div id="project-list"></div>
       </div>
+      <details class="project-add">
+        <summary>Add or find a project</summary>
+        <div class="project-tools">
+          <label>Title <input id="new-title" value="New manuscript"></label>
+          <button type="button" class="primary" id="create">Create project</button>
+          <button type="button" class="secondary" id="example">Open the estuary example</button>
+          <button type="button" class="secondary" id="import-zip">Import LaTeX ZIP</button>
+          <input id="zip" type="file" accept=".zip,application/zip" hidden>
+        </div>
         <div class="project-tools">
           <label>Search <input id="search"></label>
           <button type="button" class="secondary" id="run-search">Search</button>
         </div>
         <div id="search-results"></div>
-        <div id="project-list"></div>
+      </details>
     </section>
     <section id="open" class="stack" hidden>
-      <section class="panel">
-        <h2 id="project-title"></h2>
-        <p id="readiness" class="muted"></p>
-        <div id="members"></div>
-        <div class="project-tools">
+      <header class="project-overview">
+        <div>
+          <h2 id="project-title"></h2>
+          <p id="readiness" class="muted"></p>
+          <p id="sync-status" role="status" class="muted"></p>
+        </div>
+        <div class="project-actions">
+          <button type="button" class="secondary" id="toggle-preview" aria-expanded="false" aria-controls="manuscript-preview">Preview manuscript</button>
           <button type="button" class="secondary" id="export">Download current ZIP</button>
           <button type="button" class="primary" id="release">Approve release</button>
         </div>
+      </header>
+      <div class="editing-workspace" id="editing-workspace">
+      <section class="cell-workbench" aria-label="Manuscript editing">
+        <nav class="cell-navigation" aria-labelledby="cells-heading">
+          <h2 id="cells-heading">Manuscript cells</h2>
+          <label for="file">LaTeX file</label>
+          <select id="file"></select>
+          <div id="blocks" class="cell-list"></div>
+        </nav>
+        <section class="cell-editor" aria-labelledby="cell-heading">
+          <div class="cell-header">
+            <div>
+              <h2 id="cell-heading">Edit cell</h2>
+              <p id="block-label" class="muted"></p>
+            </div>
+            <div id="cell-position" class="cell-position" hidden>
+              <button type="button" class="secondary" id="move-cell-up">Move up</button>
+              <button type="button" class="secondary" id="move-cell-down">Move down</button>
+            </div>
+          </div>
+          <div class="cell-panes">
+            <section class="cell-pane" aria-labelledby="cell-visual-title">
+              <header class="pane-header">
+                <h3 id="cell-visual-title">Visual</h3>
+                <div id="cell-format" class="formatting" aria-label="Visual formatting" hidden>
+                  <button type="button" id="cell-bold" title="Bold" aria-label="Bold" aria-pressed="false"><b>B</b></button>
+                  <button type="button" id="cell-italic" title="Italic" aria-label="Italic" aria-pressed="false"><i>I</i></button>
+                </div>
+              </header>
+              <div id="visual-host"></div>
+            </section>
+            <section class="cell-pane" aria-labelledby="cell-source-title">
+              <header class="pane-header"><h3 id="cell-source-title">LaTeX</h3></header>
+              <div id="source-host"></div>
+            </section>
+          </div>
+          <div class="cell-actions">
+            <button type="button" class="primary" id="propose-cell">Propose cell edit</button>
+            <button type="button" class="text-button" id="discard-cell" hidden>Discard draft</button>
+            <button type="button" class="text-button" id="recover-cell" hidden>Use current revision as base</button>
+            <span id="cell-draft-status" role="status" class="muted"></span>
+          </div>
+          <details id="draft-comparison" open hidden>
+            <summary>Current accepted LaTeX</summary>
+            <pre id="current-source"></pre>
+          </details>
+          <div class="cell-settings">
+            <details id="add-cell" hidden>
+              <summary>Add a cell</summary>
+              <form id="new-cell" class="new-cell">
+                <label>Placement
+                  <select id="new-cell-placement">
+                    <option value="after">After selected cell</option>
+                    <option value="before">Before selected cell</option>
+                  </select>
+                </label>
+                <label>Cell LaTeX <textarea id="new-cell-source" rows="3" required placeholder="A paragraph, or \section{Heading}"></textarea></label>
+                <button type="submit" class="secondary">Add cell</button>
+              </form>
+            </details>
+            <details id="block-policy" hidden>
+              <summary>Cell permissions</summary>
+              <div class="project-tools">
+                <label>Block owner <select id="block-owner"></select></label>
+                <label><input type="checkbox" id="block-ai"> Allow AI proposals for this cell</label>
+              </div>
+            </details>
+            <div id="comment-compose" class="project-tools" hidden>
+              <label>Comment <input id="comment-body"></label>
+              <button type="button" class="text-button" id="comment">Comment on this cell</button>
+              <button type="button" class="text-button" id="cancel-reply" hidden>Cancel reply</button>
+            </div>
+          </div>
+          <div id="detached-drafts" class="stack" hidden></div>
+        </section>
+      </section>
+      <aside id="manuscript-preview" class="manuscript-preview" aria-labelledby="preview-heading" hidden>
+        <header class="preview-header">
+          <h2 id="preview-heading">Manuscript preview</h2>
+          <button type="button" class="text-button" id="close-preview">Hide preview</button>
+        </header>
+        <div class="preview-settings">
+          <label>Main LaTeX file <select id="preview-root"></select></label>
+          <label>Engine <select id="preview-engine">
+            <option value="pdflatex">pdfLaTeX</option>
+            <option value="xelatex">XeLaTeX</option>
+            <option value="lualatex">LuaLaTeX</option>
+          </select></label>
+          <label class="preview-draft-choice"><input type="checkbox" id="preview-drafts" checked> Include saved drafts</label>
+          <button type="button" class="primary" id="build-preview">Build PDF</button>
+        </div>
+        <div class="preview-navigation" role="group" aria-label="Preview format">
+          <button type="button" class="secondary" id="show-manuscript" aria-pressed="true">Manuscript</button>
+          <button type="button" class="secondary" id="show-preview-pdf" aria-pressed="false" disabled>PDF</button>
+          <a class="text-button" id="open-preview-pdf" target="_blank" rel="noopener noreferrer" hidden>Open PDF in new tab</a>
+        </div>
+        <p id="preview-status" class="muted" role="status"></p>
+        <p id="preview-draft-status" class="muted" role="status"></p>
+        <details id="preview-error" class="preview-error" hidden>
+          <summary>Build details</summary><pre id="preview-error-log"></pre>
+        </details>
+        <article id="preview-manuscript" class="preview-paper" aria-label="Combined manuscript"></article>
+        <iframe id="preview-pdf" class="preview-pdf" title="Compiled manuscript PDF" referrerpolicy="no-referrer" hidden></iframe>
+      </aside>
+      </div>
+      <div class="project-review">
+        <section class="panel">
+          <h2>Review</h2>
+          <div id="queue" class="queue stack"></div>
+        </section>
+        <section class="panel">
+          <h2>Comments</h2>
+          <div id="threads" class="queue stack"></div>
+        </section>
+      </div>
+      <section class="panel">
+        <h2>Access and releases</h2>
+        <div id="members"></div>
+        <div id="project-access"></div>
         <div id="releases"></div>
         <div class="project-tools">
           <label>Collection <input id="collection-name" value="Active papers"></label>
           <button type="button" class="secondary" id="save-collection">Save collection</button>
         </div>
-      </section>
-      <section class="panel">
-        <h2>Manuscript</h2>
-        <div class="split">
-          <div>
-            <label for="file">File</label>
-            <select id="file"></select>
-            <div id="blocks" class="stack" style="margin-top:12px"></div>
-          </div>
-          <div>
-            <p id="block-label" class="muted"></p>
-            <div id="visual-host" class="surface"></div>
-            <div id="source-host" class="surface" style="margin-top:10px"></div>
-            <div class="project-tools">
-              <button type="button" class="primary" id="propose-visual">Propose visual edit</button>
-              <button type="button" class="secondary" id="propose-source">Propose source edit</button>
-              <button type="button" class="text-button" id="comment">Comment on this block</button>
-            </div>
-            <label>Comment <input id="comment-body" style="width:min(100%,420px)"></label>
-          </div>
-        </div>
-      </section>
-      <section class="panel">
-        <h2>Review</h2>
-        <p class="muted">Visual and source edits wait as the same kind of suggestion. Accepting one leaves an overlapping edit stale instead of merging it.</p>
-        <div id="queue" class="queue stack"></div>
       </section>
       <section class="panel">
         <h2>Evidence</h2>
@@ -122,15 +226,13 @@
     </section>
   </main>
   <footer>PaperColab <span aria-hidden="true">/</span> Workspace</footer>
-  <style>
-    #visual-host,#source-host{border:1px solid var(--line);border-radius:5px;min-height:72px;background:#fff}
-    #blocks button{text-align:left}
-  </style>
   <script src="vendor/latex.min.js"></script>
   <script src="vendor/engines.min.js"></script>
   <script src="blocks.js"></script>
   <script src="editors.js"></script>
   <script src="identity.js"></script>
+  <script src="access.js"></script>
+  <script src="project-preview.js"></script>
   <script src="project.js"></script>
 </body>
 </html>

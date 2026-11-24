@@ -77,6 +77,9 @@
     $('visual-section').hidden = !isRich;
     $('raw-explanation').hidden = isRich;
     $('raw-explanation').textContent = item.reason ?? 'PaperColab preserves this block as original LaTeX.';
+    const mathPreview = $('math-preview');
+    mathPreview.replaceChildren();
+    mathPreview.hidden = isRich || !editors.renderMath(mathPreview, B.current(file(), item));
     $('block-title').textContent = item.kind === 'heading' ? 'Section heading' : isRich ? 'Paragraph' : item.label;
     const line = file().original.slice(0, item.from).split(/\r\n|\r|\n/).length;
     $('block-context').textContent = path.split('/').pop() + ' · line ' + line;
@@ -88,7 +91,7 @@
           refreshTitle(); updateControls(); note();
         },
         onState: () => { if (visual) updateControls(); },
-        onProtected: () => note('Use the LaTeX pane to change a citation or math expression.')
+        onProtected: () => note('Use the LaTeX pane to change a protected expression.')
       });
     }
     source = editors.source($('source-surface'), B.current(file(), item), !isRich, value => {

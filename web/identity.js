@@ -55,43 +55,82 @@
       return { ok: false, error: 'This change needs review. It does not stay one block.', unresolved: [stableId], result: 'needs-review' };
     }
     const nextText = text.slice(0, block.from) + after + text.slice(block.to);
-    const parsed = B().parseFile(nextText, { root });
-    const listed = catalogue(parsed, previous, { stableId, kind: block.kind, quote: after });
+    const listed = locateChangedBlock(nextText, root, previous, block, after, block.from);
     if (!listed.ok) return listed;
     return { ok: true, text: nextText, blocks: listed.blocks, unresolved: listed.unresolved, result: 'accepted' };
   }
 
+  function locateChangedBlock(text, root, previous, block, quote, start, blockCount = previous.length) {
+    const parsed = B().parseFile(text, { root });
+    const { stableId, kind } = block;
+    const listed = catalogue(parsed, previous, { stableId, kind, quote, near: start });
+    if (!listed.ok) return listed;
+    const target = listed.blocks.find(item => item.stableId === stableId);
+    if (target.from !== start || listed.unresolved.length || listed.blocks.length !== blockCount) {
+      return { ok: false, error: 'This change would alter other block boundaries and needs review.', result: 'needs-review' };
+    }
+    return listed;
+  }
+
+  const lineEnding = /(?:\r\n|\r(?!\n)|(?<!\r)\n)/.source;
+  const blankLine = lineEnding + '[ \t]*' + lineEnding;
+  const startsBlank = new RegExp('^' + blankLine);
+  const endsBlank = new RegExp(blankLine + '$');
+
+  function insertCellText(text, at, quote, lineEndingSource = text) {
+    const separator = (lineEndingSource.match(new RegExp(lineEnding))?.[0] ?? '\n').repeat(2);
+    const before = text.slice(0, at);
+    const after = text.slice(at);
+    const prefix = before && !endsBlank.test(before) ? separator : '';
+    const suffix = after && !startsBlank.test(after) ? separator : '';
+    return { text: before + prefix + quote + suffix + after, start: at + prefix.length };
+  }
+
   function boundary(text, at) {
     if (at <= 0 || at >= text.length) return Math.max(0, Math.min(text.length, at));
-    if (text.slice(Math.max(0, at - 2), at) === '\n\n' || text.slice(at, at + 2) === '\n\n') return at;
-    let best = at;
+    let best = null;
     let bestDistance = Infinity;
-    const start = Math.max(0, at - 120);
-    const end = Math.min(text.length, at + 120);
-    for (let index = start; index <= end; index++) {
-      const onBoundary = index === 0 || index === text.length || text.slice(Math.max(0, index - 2), index) === '\n\n' || text.slice(index, index + 2) === '\n\n';
-      if (!onBoundary) continue;
+    function consider(index) {
       const distance = Math.abs(index - at);
-      if (distance < bestDistance) { bestDistance = distance; best = index; }
+      if (distance <= 120 && distance < bestDistance) { bestDistance = distance; best = index; }
     }
+    consider(0);
+    for (const match of text.matchAll(new RegExp(blankLine, 'g'))) {
+      consider(match.index);
+      consider(match.index + match[0].length);
+    }
+    consider(text.length);
     return best;
   }
 
-  function moveBlock(text, previous, stableId, toOffset, root) {
+  function moveBlock(text, previous, stableId, toOffset, root, exact = false) {
     const block = previous.find(item => item.stableId === stableId);
     if (!block) return { ok: false, error: 'Unknown block.' };
     if (!Number.isInteger(toOffset) || toOffset < 0 || toOffset > text.length) return { ok: false, error: 'The destination is outside the file.' };
+    if (toOffset >= block.from && toOffset <= block.to) return { ok: false, error: 'Choose a destination outside the block.' };
     const slice = text.slice(block.from, block.to);
-    const removed = (text.slice(0, block.from) + text.slice(block.to)).replace(/\n{3,}/g, '\n\n');
-    let at = toOffset >= block.to ? toOffset - (block.to - block.from) : toOffset <= block.from ? toOffset : block.from;
-    at = boundary(removed, Math.max(0, Math.min(removed.length, at)));
-    const prefix = at > 0 && !removed.slice(0, at).endsWith('\n\n') ? '\n\n' : '';
-    const suffix = at < removed.length && !removed.slice(at).startsWith('\n\n') ? '\n\n' : '';
-    const nextText = removed.slice(0, at) + prefix + slice + suffix + removed.slice(at);
-    const parsed = B().parseFile(nextText, { root });
-    const listed = catalogue(parsed, previous, { stableId, kind: block.kind, quote: slice, near: at + prefix.length });
+    const removed = text.slice(0, block.from) + text.slice(block.to);
+    const adjusted = toOffset > block.to ? toOffset - slice.length : toOffset;
+    const at = exact ? adjusted : boundary(removed, adjusted);
+    if (at === null) return { ok: false, error: 'Choose a destination near a block boundary.' };
+    const inserted = insertCellText(removed, at, slice, text);
+    const listed = locateChangedBlock(inserted.text, root, previous, block, slice, inserted.start);
     if (!listed.ok) return listed;
-    return { ok: true, text: nextText, blocks: listed.blocks, unresolved: listed.unresolved, result: 'moved' };
+    return { ok: true, text: inserted.text, blocks: listed.blocks, unresolved: listed.unresolved, result: 'moved' };
+  }
+
+  function insertCell(text, previous, neighborId, direction, kind, source, root) {
+    const neighbor = previous.find(item => item.stableId === neighborId);
+    if (!neighbor) return { ok: false, error: 'Unknown cell.' };
+    if (!oneBlock(source, kind)) {
+      return { ok: false, error: 'Enter one supported paragraph or LaTeX heading.' };
+    }
+    const block = { stableId: crypto.randomUUID(), kind };
+    const at = direction === 'before' ? neighbor.from : neighbor.to;
+    const inserted = insertCellText(text, at, source);
+    const listed = locateChangedBlock(inserted.text, root, previous, block, source, inserted.start, previous.length + 1);
+    if (!listed.ok) return listed;
+    return { ok: true, text: inserted.text, blocks: listed.blocks, stableId: block.stableId };
   }
 
   function resolveAnchor(blocks, anchor) {
@@ -102,5 +141,5 @@
     return { status: 'exact', blockId: block.stableId, path: block.path, from: block.from, to: block.to };
   }
 
-  globalThis.PaperColabIdentity = { catalogue, applyEdit, moveBlock, resolveAnchor, oneBlock };
+  globalThis.PaperColabIdentity = { catalogue, applyEdit, moveBlock, insertCell, resolveAnchor, oneBlock };
 })();

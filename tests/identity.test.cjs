@@ -68,3 +68,37 @@ test('visual and source suggestions are the same kind of block replacement', () 
   assert.equal(sourceEdit.blocks[0].stableId, first.blocks[0].stableId);
   assert.match(sourceEdit.text, /^Bao reads/);
 });
+
+test('editing a block to match an earlier paragraph retains both identities', () => {
+  const text = 'Same paragraph.\n\nDifferent paragraph.\n';
+  const first = listed(text, []);
+  const [other, target] = first.blocks;
+  const result = I.applyEdit(text, first.blocks, target.stableId, other.quote, false);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blocks.map(block => block.stableId), [other.stableId, target.stableId]);
+  assert.equal(result.blocks[1].from, target.from);
+});
+
+test('moving a block preserves raw LaTeX bytes and source line endings', () => {
+  const text = [
+    'Alpha.',
+    '',
+    '\\begin{verbatim}',
+    'Preserve the two empty lines below.',
+    '',
+    '',
+    'Keep this line too.',
+    '\\end{verbatim}',
+    '',
+    'Beta.',
+    ''
+  ].join('\r\n');
+  const first = listed(text, []);
+  const [alpha, raw, beta] = first.blocks;
+  const result = I.moveBlock(text, first.blocks, alpha.stableId, text.length, false);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blocks.map(block => block.stableId), [raw.stableId, beta.stableId, alpha.stableId]);
+  assert.equal(result.blocks[0].quote, raw.quote);
+  assert.equal(result.text.replace(/(?:\r\n)/g, '').includes('\n'), false);
+  assert.ok(result.text.includes(raw.quote));
+});

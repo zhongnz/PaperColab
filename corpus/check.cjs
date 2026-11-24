@@ -12,7 +12,7 @@ const coverageKeys = ['editableParagraphs', 'editableHeadings', 'fallbackParagra
 
 function blankCoverage() {
   return { editableParagraphs: 0, editableHeadings: 0, fallbackParagraphs: 0, fallbackHeadings: 0,
-    preservedBlocks: 0, editableBlocks: 0, fallbackCommands: [], uninspectedSources: [] };
+    preservedBlocks: 0, editableBlocks: 0, fallbackCommands: [], uninspectedSources: [], quarantinedSources: [] };
 }
 
 function addCoverage(total, part) {
@@ -31,7 +31,10 @@ function manuscriptCoverage(data, root, sources) {
     if (!/\.(?:tex|ltx)$/i.test(source)) continue;
     const text = data.files.get(source)?.text;
     if (typeof text !== 'string') { total.uninspectedSources.push(source); continue; }
-    addCoverage(total, PaperColabBlocks.coverage(PaperColabBlocks.parseFile(text, { root: source === root })));
+    const file = PaperColabBlocks.parseFile(text, { root: source === root });
+    const [block] = file.blocks;
+    if (file.blocks.length === 1 && block.reason) total.quarantinedSources.push({ path: source, reason: block.reason });
+    addCoverage(total, PaperColabBlocks.coverage(file));
   }
   return total;
 }
@@ -45,7 +48,8 @@ async function check(filename) {
     const counts = { found: 0, toolchain: 0, review: 0, missing: 0 };
     for (const ref of references) counts[ref.status]++;
     const coverage = manuscriptCoverage(data, root, sources);
-    return { root, sources, counts, notes, coverage };
+    const unresolvedReferences = references.filter(ref => ref.status === 'missing' || ref.status === 'review');
+    return { root, sources, counts, notes, coverage, unresolvedReferences };
   });
   return { name: path.basename(filename), sha256: createHash('sha256').update(bytes).digest('hex'),
     files: data.files.size, roots, archiveFindings: data.notes, pdfBuild: 'not-run', roundTrip: 'not-run' };
