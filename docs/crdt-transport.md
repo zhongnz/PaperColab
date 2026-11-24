@@ -79,3 +79,24 @@ behaviour with the existing server. This is not a scalable pub/sub service,
 keystroke co-editing, durable offline recovery or a public deployment. The
 browser test blocks revision polling and checks push refresh, stale draft
 retention, presence and member revocation. No new third-party dependency.
+
+## Local draft recovery and manual conflict reconciliation
+
+Hosted users can opt into IndexedDB storage before editing. Records are scoped
+by signed-in actor and project, with separate random page-instance IDs to avoid
+cross-tab overwrites. Each stores original cell ID/version/source, local source,
+mode and timestamp; invalid scientific field drafts additionally retain field
+values for manual recovery. No bearer token is stored. Writes are queued and
+success is shown after transaction completion. Browser storage is unencrypted,
+not a backup, can be cleared or evicted, and is accessible to other same-origin
+scripts and people using the same browser profile. Disable on shared devices.
+No automatic restore or upload. Stored drafts can be listed, downloaded,
+removed or compared against fresh server state. Reconciliation uses explicit
+LaTeX input, normal server validation and current cell version checks, not an
+automatic merge. Missing cells are downloadable only. A successful save or
+proposal removes its record; cleanup failures are reported. Navigation can leave
+records for later recovery. This is draft persistence, not durable CRDT replicas,
+full offline editing or server-side encrypted storage. The initial implementation
+bounds individual records at 2 MiB and 50 records per actor/project. Invalid
+visual serialisation is not guaranteed to be recoverable. Test covers page reload,
+remote revision, comparison and explicit reconciliation.

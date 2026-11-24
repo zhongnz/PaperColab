@@ -10,6 +10,111 @@
   const B=PaperColabBlocks, E=PaperColabEditors;
   const isMulti=()=>viewMode!=='focused';
   let crdtModule=null;
+  // Each page instance owns distinct records, even when a tab is duplicated.
+  // A reload discovers prior records through the actor/project index.
+  const draftSession=crypto.randomUUID(), localRecords=new Map();
+  let writes=Promise.resolve(), storageFailed=false, recovery=null, recoveryGeneration=0;
+  const store=globalThis.PaperColabDrafts;
+  function storageMessage(message){$('draft-storage-status').textContent=message;}
+  function enqueue(work){
+    writes=writes.then(work).catch(error=>{
+      storageFailed=true;
+      storageMessage('Local draft storage failed. Keep this tab open and copy your work. '+error.message);
+    });
+    return writes;
+  }
+  function remember(base,after,mode,valid=true,extra=null){
+    if(!$('durable-drafts').checked||!me||!detail||!base)return;
+    const id=[me.id,detail.id,draftSession,base.stableId].join(':');
+    if(after===base.quote&&valid&&!extra){forget(base);return;}
+    const row={id,actor:me.id,project:detail.id,cell:base.stableId,path:base.path,
+      version:base.version,before:base.quote,after,mode,valid,extra,
+      updated:Date.now(),stamp:crypto.randomUUID()};
+    localRecords.set(id,row);
+    storageMessage('Saving draft on this browser…');
+    enqueue(async()=>{await store.put(row);if(!storageFailed)storageMessage('Draft stored on this browser.');});
+  }
+  function forget(base){
+    if(!me||!detail||!base)return Promise.resolve();
+    const id=[me.id,detail.id,draftSession,base.stableId].join(':');
+    const row=localRecords.get(id);
+    if(!row)return Promise.resolve();
+    localRecords.delete(id);
+    return enqueue(async()=>{if(!await store.remove(id,row.stamp))throw Error('Draft record changed in another session.');});
+  }
+  async function discardCurrent(){
+    const bases=isMulti()?[...multiDrafts.values()].map(x=>x.base):[selected];
+    await Promise.all(bases.map(forget));
+  }
+  function closeRecovery(){
+    recoveryGeneration++;recovery=null;
+    $('recovery-detail').hidden=true;$('recovery-list').replaceChildren();
+    $('recovery-base').textContent=$('recovery-local').textContent=$('recovery-remote').textContent='';
+    $('recovery-result').value='';
+  }
+  async function listRecovery(){
+    if(!me||!detail)return;
+    const actor=me.id,project=detail.id,generation=++recoveryGeneration;
+    recovery=null;$('recovery-detail').hidden=true;
+    await writes;
+    const rows=await store.list(actor,project);
+    if(generation!==recoveryGeneration||me?.id!==actor||detail?.id!==project)return;
+    const host=$('recovery-list');host.replaceChildren();
+    for(const row of rows){
+      const button=document.createElement('button');button.type='button';button.className='secondary';
+      button.textContent=row.path+' · cell '+row.cell.slice(0,8)+' · v'+row.version+' · '+new Date(row.updated).toLocaleString();
+      button.onclick=()=>act(()=>compareRecovery(row),true);host.append(button);
+    }
+    if(!rows.length)host.textContent='No stored drafts for this project and signed-in account.';
+  }
+  async function compareRecovery(row){
+    if(dirty)throw Error('Keep and close your active drafts, or save them, before reconciling a stored draft.');
+    if(row.actor!==me.id||row.project!==detail.id)throw Error('Draft scope changed.');
+    const latest=await api('GET','/api/projects/'+detail.id);
+    const current=latest.blocks.find(b=>b.stableId===row.cell);
+    recovery={row,current};
+    $('recovery-base').textContent=row.before;
+    $('recovery-local').textContent=row.extra?row.after+'\n\nUnapplied fields:\n'+JSON.stringify(row.extra,null,2):row.after;
+    $('recovery-remote').textContent=current?.quote??'Cell missing from the current manuscript.';
+    const matches=current&&current.version===row.version&&current.quote===row.before;
+    $('recovery-note').textContent=!current?'Cell missing. Copy the draft or download it; it cannot be saved here.':
+      matches?'Original version still matches. Review your local draft.':
+      'Conflict: current version '+current.version+' differs from original version '+row.version+'. Reconcile explicitly; no automatic merge.';
+    $('recovery-result').value=normalise(row.after);
+    const member=latest.members.find(m=>m.id===me.id);
+    const allowed=Boolean(current&&['author','lead'].includes(member?.role));
+    $('recovery-save').hidden=!allowed||me.kind!=='human'||(!current.rich&&!B.scientific(current.quote));
+    $('recovery-propose').hidden=!allowed||!current.rich;
+    $('recovery-detail').hidden=false;
+  }
+  async function resolveRecovery(action){
+    if(!recovery||dirty)throw Error('Close active drafts before resolving.');
+    const {row,current}=recovery;
+    if(row.actor!==me.id||row.project!==detail.id||!current)throw Error('Draft is not in this project.');
+    if(!window.confirm('Submit the reconciled text against the displayed current version?'))return;
+    const eol=current.quote.match(/\r\n|\r|\n/)?.[0]??'\n';
+    const typed=$('recovery-result').value;
+    const after=typed===normalise(row.after)?row.after:typed.replace(/\n/g,eol);
+    if(after===current.quote)throw Error('No change to the current manuscript. Discard the stored draft if finished.');
+    const endpoint='/api/projects/'+detail.id;
+    if(action==='direct'){
+      if(!directAllowed())throw Error('Direct saves require a human author.');
+      await saveCell(current,after,'source');
+    }else{
+      const latest=await api('GET',endpoint);
+      const base=latest.blocks.find(b=>b.stableId===current.stableId);
+      if(!base||base.version!==current.version||base.quote!==current.quote)throw Error('Cell changed again. Compare the draft again.');
+      const response=await api('POST',endpoint+'/suggestions',{block_id:current.stableId,
+        base_revision:latest.revision,before:current.quote,after,mode:'source'});
+      if(response.status!=='pending')throw Error('Proposal is stale. Stored draft retained.');
+    }
+    // A failed deletion cannot undo an accepted server mutation. Report it
+    // and leave the stored record available for explicit cleanup.
+    try{if(!await store.remove(row.id,row.stamp))throw Error('Stored record changed; retained.');}
+    catch(error){storageMessage('Server accepted the change, but local cleanup failed: '+error.message);}
+    closeRecovery();await openProject(detail.id);await listRecovery();
+    say(action==='direct'?'Reconciled cell saved.':'Reconciled cell submitted for review.');
+  }
   let live=null, liveRetry=0, presenceTimer=null;
   function stopLive(){
     const old=live; live=null;
@@ -120,6 +225,7 @@
     $('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=value;
     for(const button of $('hosted-views').querySelectorAll('[data-view]'))button.disabled=value;
     $('file').disabled=value;
+    $('durable-drafts').disabled=value||dirty;
     updateTransportControl();
   }
   const normalise = value => value.replace(/\r\n?/g,'\n');
@@ -129,6 +235,8 @@
     $('discard-local').disabled=!value;
     $('refresh-manuscript').disabled=value;
     $('hosted-draft-count').textContent=isMulti() ? multiDrafts.size+' unsaved cell'+(multiDrafts.size===1?'':'s') : '';
+    $('durable-drafts').disabled=busy||dirty;
+    $('keep-drafts').disabled=!dirty||!$('durable-drafts').checked;
     presenceChanged();
   }
 
@@ -178,7 +286,7 @@
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'text-button';
       button.textContent = project.title + ' · ' + project.role;
-      button.onclick = () => { if(!dirty || window.confirm('Discard your local cell draft?')) act(()=>openProject(project.id),true); };
+      button.onclick = () => { if(!dirty || window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch project?':'Discard your local cell draft?')) act(()=>openProject(project.id),true); };
       list.append(button);
     }
     $('operator-tools').hidden = me.workspace_role !== 'operator';
@@ -187,6 +295,7 @@
 
   async function openProject(id) {
     if(live&&live.project!==id)stopLive();
+    closeRecovery();
     const incoming = await api('GET', '/api/projects/' + id);
     detail = incoming;
     updateTransportControl();
@@ -314,7 +423,7 @@
       button.onclick = () => {
         if(busy) return;
         if(isMulti()) {selected=block;presenceChanged();cellViews.get(block.stableId)?.element.scrollIntoView({block:'nearest'});}
-        else if(!dirty || window.confirm('Discard your local cell draft?')) selectBlock(block);
+        else if(!dirty || window.confirm($('durable-drafts').checked?'Leave active draft in local recovery and switch cell?':'Discard your local cell draft?')) selectBlock(block);
       };
       host.append(button);
     }
@@ -353,12 +462,13 @@
     const save=make('Save cell',()=>act(()=>commitHostedCell(base,'direct'),true));
     const propose=make('Propose cell',()=>act(()=>commitHostedCell(base,'proposal'),true));
     const discard=make('Discard cell draft',()=>act(async()=>{
+      await forget(base);
       multiDrafts.delete(base.stableId);
       if(!multiDrafts.size) {draftState(false);await openProject(detail.id);}
       else {replaceHostedCell(base);draftState(true);}
     },true));
     save.hidden=!directAllowed()||!editable;propose.hidden=!allowed||!base.rich;discard.hidden=!editable;
-    function changed(value,kind,error='') {
+    function changed(value,kind,error='',extra=null) {
       after=value;mode=kind;valid=!error;
       if(error||value!==base.quote) multiDrafts.set(base.stableId,{base,after,mode,valid});
       else multiDrafts.delete(base.stableId);
@@ -366,6 +476,7 @@
       save.disabled=propose.disabled=!has||!valid;discard.disabled=!has;
       status.textContent=error||(has?'Local draft · not saved':'');
       element.classList.toggle('has-draft',has);
+      remember(base,value,kind,valid,extra);
       draftState(multiDrafts.size>0);
     }
     function renderContent(value) {
@@ -396,7 +507,7 @@
                 el.value.replace(/\n/g,spec.fields[i].value.match(/\r\n|\r|\n/)?.[0]??'\n'));
               const next=B.scientificEdit(value,values);
               area.value=normalise(next);changed(next,'source');
-            } catch(error){changed(after,'source',error.message);}
+            } catch(error){changed(after,'source',error.message,{fields:fields.inputs.map((el,i)=>({name:spec.fields[i].name,value:el.value}))});}
           });
         }
       } else {
@@ -464,6 +575,7 @@
         {block_id:base.stableId,base_revision:detail.revision,before:base.quote,after:entry.after,mode:entry.mode});
       if(result.status!=='pending') throw new Error('Proposal is stale; your cell draft is retained.');
     }
+    await forget(base);
     multiDrafts.delete(base.stableId);
     if(!multiDrafts.size) {draftState(false);await openProject(detail.id);}
     else {
@@ -474,7 +586,7 @@
   }
   for(const button of $('hosted-views').querySelectorAll('[data-view]')) button.onclick=()=>{
     if(busy||button.dataset.view===viewMode) return;
-    if(dirty&&!window.confirm('Discard all local cell drafts and switch view?')) return;
+    if(dirty&&!window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch view?':'Discard all local cell drafts and switch view?')) return;
     act(async()=>{viewMode=button.dataset.view;updateView();await showFile($('file').value);},true);
   };
 
@@ -500,7 +612,9 @@
             PaperColabBlocks.editVisual(parsed,local,content);
             const after=PaperColabBlocks.current(parsed,local);
             source?.set(after);
-            sourceDraft=after; sourceDirty=false; draftState(after!==block.quote);
+            sourceDraft=after; sourceDirty=false;
+            remember(block,after,'visual');
+            draftState(after!==block.quote);
           } catch(error) {fail(error);}
         },
         onState() {},
@@ -510,6 +624,8 @@
     source = PaperColabEditors.source($('source-host'), PaperColabBlocks.current(parsed, local), (!block.rich && !scientific) || (!directAllowed() && !block.rich), value => {
       sourceDraft = value; sourceDirty=true;
       visual?.setEditable(false,false);
+      const eol=block.quote.match(/\r\n|\r|\n/)?.[0]??fileText.match(/\r\n|\r|\n/)?.[0]??'\n';
+      remember(block,value.replace(/\n/g,eol),'source',false);
       draftState(true);
     });
     sourceDraft = PaperColabBlocks.current(parsed, local);
@@ -521,6 +637,7 @@
     const eol=selected.quote.match(/\r\n|\r|\n/)?.[0] ?? fileText.match(/\r\n|\r|\n/)?.[0] ?? '\n';
     const after=sourceDirty ? source.value().replace(/\n/g,eol) : sourceDraft;
     const saved=await saveCell(selected,after,sourceDirty?'source':'visual');
+    await forget(selected);
     draftState(false);
     await openProject(detail.id);
     say('Cell saved via '+saved.transport+'. Other sessions will receive the revision.');
@@ -567,9 +684,11 @@
       PaperColabBlocks.editSource(parsed, local, value);
       after = PaperColabBlocks.current(parsed, local);
     }
-    await api('POST', '/api/projects/' + detail.id + '/suggestions', {
+    const response=await api('POST', '/api/projects/' + detail.id + '/suggestions', {
       block_id: selected.stableId, base_revision: detail.revision, before: selected.quote, after, mode
     });
+    if(response.status!=='pending')throw Error('Proposal is stale. Local draft retained.');
+    await forget(selected);
     draftState(false);
     say(mode === 'visual' ? 'Visual suggestion recorded.' : 'Source suggestion recorded.');
     await openProject(detail.id);
@@ -590,10 +709,11 @@
   $('actor').value = token;
   $('token').value = token;
   function changeToken(next) {
-    if(busy || (dirty && !window.confirm('Discard your local cell draft?'))) {$('actor').value=token;return;}
+    if(busy || (dirty && !window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch account?':'Discard your local cell draft?'))) {$('actor').value=token;return;}
     act(async()=>{
       const previous=detail?.id;
       stopLive();$('live-enabled').checked=false;
+      closeRecovery();$('durable-drafts').checked=false;storageMessage('');storageFailed=false;
       destroyEditors(); detail=null; selected=null; fileText='';
       $('crdt-enabled').checked=false;updateTransportControl();
       $('open').hidden=true;
@@ -617,11 +737,38 @@
     });
   };
   $('file').onchange = () => {
-    if(busy || (dirty && !window.confirm('Discard your local cell drafts?'))) {$('file').value=selected?.path??'';return;}
+    if(busy || (dirty && !window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch file?':'Discard your local cell drafts?'))) {$('file').value=selected?.path??'';return;}
     act(()=>showFile($('file').value),true);
   };
   $('save-direct').onclick=()=>act(saveDirect,true);
-  $('discard-local').onclick=()=>act(()=>openProject(detail.id),true);
+  $('discard-local').onclick=()=>act(async()=>{await discardCurrent();await openProject(detail.id);},true);
+  $('durable-drafts').onchange=()=>{
+    if($('durable-drafts').checked){
+      storageFailed=false;
+      storageMessage('Local recovery enabled. Drafts remain on this browser until saved or removed.');
+    }else storageMessage('New local storage disabled. Existing stored drafts can still be removed from recovery.');
+  };
+  $('keep-drafts').onclick=()=>act(async()=>{
+    await writes;
+    if(storageFailed)throw Error('Local storage failed; copy your draft before leaving.');
+    const bases=isMulti()?[...multiDrafts.values()].map(x=>x.base):[selected];
+    if(!bases.length||bases.some(base=>!base||![...localRecords.values()].some(r=>r.actor===me.id&&r.project===detail.id&&r.cell===base.stableId)))
+      throw Error('Not all active drafts have a local recovery record.');
+    await openProject(detail.id);await listRecovery();say('Drafts kept locally. Select a stored draft to reconcile.');
+  },true);
+  $('list-recovery').onclick=()=>act(listRecovery,true);
+  $('recovery-save').onclick=()=>act(()=>resolveRecovery('direct'));
+  $('recovery-propose').onclick=()=>act(()=>resolveRecovery('proposal'));
+  $('recovery-download').onclick=()=>{
+    if(recovery)download(JSON.stringify(recovery.row,null,2),'papercolab-local-draft.json','application/json');
+  };
+  $('recovery-remove').onclick=()=>act(async()=>{
+    if(!recovery||!window.confirm('Permanently remove this local draft?'))return;
+    const row=recovery.row;
+    if(!await store.remove(row.id,row.stamp))throw Error('Stored record changed; reopen the list.');
+    localRecords.delete(row.id);closeRecovery();await listRecovery();
+  });
+
   $('refresh-manuscript').onclick=()=>act(()=>openProject(detail.id));
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
   $('live-enabled').onchange=()=>{if($('live-enabled').checked)ensureLive();else stopLive();};

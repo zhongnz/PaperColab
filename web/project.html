@@ -84,6 +84,32 @@
             </div>
             <p id="sync-state" role="status" class="muted"></p>
             <p id="hosted-draft-count" role="status" class="muted"></p>
+            <section id="local-recovery" class="local-recovery" aria-label="Local draft recovery">
+              <label><input type="checkbox" id="durable-drafts"> Keep drafts on this browser</label>
+              <p class="muted">Optional, unencrypted browser storage. Avoid on shared devices. Stored drafts are not manuscript revisions.</p>
+              <p id="draft-storage-status" role="status" class="muted"></p>
+              <div class="project-tools">
+                <button type="button" id="list-recovery">Show stored drafts</button>
+                <button type="button" id="keep-drafts" disabled>Keep drafts and reload manuscript</button>
+              </div>
+              <div id="recovery-list" class="stack"></div>
+              <div id="recovery-detail" hidden>
+                <p id="recovery-note" role="status"></p>
+                <div class="recovery-comparison">
+                  <div><strong>Original base</strong><pre id="recovery-base"></pre></div>
+                  <div><strong>Local draft</strong><pre id="recovery-local"></pre></div>
+                  <div><strong>Current server cell</strong><pre id="recovery-remote"></pre></div>
+                </div>
+                <label for="recovery-result">Reconciled LaTeX (review before submitting)</label>
+                <textarea id="recovery-result" rows="5" spellcheck="false"></textarea>
+                <div class="project-tools">
+                  <button type="button" id="recovery-save">Save reconciled cell</button>
+                  <button type="button" id="recovery-propose">Propose reconciled cell</button>
+                  <button type="button" id="recovery-download">Download local draft</button>
+                  <button type="button" id="recovery-remove">Remove stored draft</button>
+                </div>
+              </div>
+            </section>
             <div id="hosted-cells" hidden></div>
             <div id="focused-cell">
             <p id="block-label" class="muted"></p>
@@ -157,6 +183,7 @@
   <script src="blocks.js"></script>
   <script src="editors.js"></script>
   <script src="identity.js"></script>
+  <script src="drafts.js"></script>
   <script src="project.js"></script>
 </body>
 </html>

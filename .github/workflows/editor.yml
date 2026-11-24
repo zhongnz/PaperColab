@@ -34,3 +34,5 @@ jobs:
         run: python experiments/crdt/browser_test.py
       - name: Exercise live revision and presence stream
         run: python experiments/crdt/live_test.py
+      - name: Exercise durable local draft recovery
+        run: python experiments/crdt/draft_test.py
