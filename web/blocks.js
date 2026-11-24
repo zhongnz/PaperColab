@@ -9,6 +9,7 @@
     'citeauthor', 'citeyear', 'citeyearpar', 'citetalias', 'citepalias',
     'ref', 'eqref', 'pageref', 'autoref', 'nameref', 'cref', 'Cref']);
   const opaqueText = new Set(['footnote', 'texttt', 'textsc', 'underline', 'mbox']);
+  const explicitZeroArg = new Set(['TeX','LaTeX','LaTeXe','ldots','dots','textregistered','textcopyright']);
   const optionalCitations = new Set(['cite', 'citep', 'citet', 'citealt', 'citealp', 'citeauthor', 'citeyear', 'citeyearpar']);
   const marks = { textbf: 'bold', emph: 'italic', textit: 'italic' };
   const escaped = { '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}', '\u00a0': '~' };
@@ -66,6 +67,25 @@
         append({ type: 'texToken', attrs: { latex: raw(node) } });
         continue;
       }
+      if (node.type === 'comment' && depth === 0) {
+        // A comment can consume the physical newline. Treat the entire
+        // comment and its single line ending as one protected token.
+        // Never guess a missing delimiter, join a paragraph break, or
+        // reconstruct a comment from the parser's normalised content.
+        const from = node.position.start.offset, end = node.position.end.offset;
+        let value = raw(node);
+        if (!/\r?\n|\r/.test(value)) {
+          if (!next || next.type !== 'whitespace' ||
+              next.position.start.offset !== end) return fail('comment');
+          const gap = raw(next);
+          if (!/^(?:\r\n|\r|\n)[ \t]*$/.test(gap)) return fail('comment');
+          value = slice(from,next.position.end.offset);
+          i++;
+        }
+        if (!/^[ \t]*%[^\r\n]*(?:\r\n|\r|\n)[ \t]*$/.test(value)) return fail('comment');
+        append({type:'texToken',attrs:{latex:value}});
+        continue;
+      }
       if (node.type !== 'macro') return fail(node.type);
       const name = node.content;
       if (name.length === 1 && '#$%&_{}'.includes(name) && raw(node) === '\\' + name) {
@@ -102,6 +122,8 @@
           child.marks = [...existing, mark].sort((a, b) => a.type.localeCompare(b.type));
           append(child);
         }
+      } else if (explicitZeroArg.has(name) && raw(next) === '{}') {
+        append({type:'texToken',attrs:{latex:slice(node.position.start.offset,next.position.end.offset)}});
       } else if ((inlineRefs.has(name) && /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(raw(next))) ||
                  (name === 'label' && /^\{[A-Za-z0-9_.:/+-]+\}$/.test(raw(next))) ||
                  (opaqueText.has(name) && /^\{[^\\{}$%&#_^~\r\n\x00-\x1f]{1,500}\}$/.test(raw(next))) ||
@@ -179,7 +201,8 @@
       if (!group.length) return;
       const from = start(group[0]), to = end(group.at(-1));
       const { rich, commands } = represent(group);
-      if (rich?.length) add('paragraph', from, to, { rich: doc(rich), prefix: '', suffix: '' });
+      // Do not advertise comment-only or label-only ranges as prose.
+      if (rich?.some(n => n.type === 'text' && n.text.trim() || n.type === 'texToken' && !/^[ \t]*%/.test(n.attrs.latex) && !/^\\label\{/.test(n.attrs.latex))) add('paragraph', from, to, { rich: doc(rich), prefix: '', suffix: '' });
       else add('raw', from, to, { label: 'LaTeX source', fallback: 'paragraph', commands });
     }
     for (let i = 0; i < nodes.length; i++) {
@@ -235,7 +258,20 @@
     if (!same(tokens(prior), tokens(content))) throw new Error('Edit citation and math expressions in the LaTeX pane.');
     if (serialize(prior) === serialize(content)) return;
     if (serialize(content) === serialize(block.rich)) { file.edits.delete(block.id); return; }
-    set(file, block, block.prefix + serialize(content) + block.suffix, content);
+    const source = block.prefix + serialize(content) + block.suffix;
+    // Comments are not formatting: prevent wrapping one inside a visual
+    // mark, and require reparse to establish a single identical token
+    // sequence before accepting an edit. Exact comment bytes survive.
+    if (tokens(content).some(t => /^[ \t]*%/.test(t))) {
+      const marked = (content.content[0].content ?? []).some(n =>
+        n.type === 'texToken' && /^[ \t]*%/.test(n.attrs.latex) && n.marks?.length);
+      const parsed = parseFile(source), candidate = parsed.blocks[0];
+      if (marked || parsed.blocks.length !== 1 || candidate.kind !== block.kind ||
+          candidate.from !== 0 || candidate.to !== source.length || !candidate.rich ||
+          !same(tokens(content),tokens(candidate.rich)))
+        throw new Error('Keep protected comments and their line endings intact. Edit complex comments in LaTeX.');
+    }
+    set(file, block, source, content);
   }
 
   function editSource(file, block, source) {

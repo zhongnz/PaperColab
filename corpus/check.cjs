@@ -48,7 +48,20 @@ async function check(filename) {
     for (const ref of references) counts[ref.status]++;
     const coverage = manuscriptCoverage(data, root, sources);
     const parsed=data.parsed.get(root);
-    return { root, sources, counts, notes, coverage,
+    // Candidate declaration names and arities only. This is diagnostic,
+    // not a macro expander or an authority to edit unknown invocations.
+    const macroCandidates=[];
+    for(const source of sources){
+      if(!/\.(tex|ltx|sty|cls)$/i.test(source))continue;
+      const text=data.files.get(source)?.text;
+      if(typeof text!=='string')continue;
+      for(const m of text.matchAll(/^[ \t]*\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand)\*?[ \t]*\{\\([A-Za-z]+)\}[ \t]*(?:\[([0-9])\])?[ \t]*\{/gm)){
+        if(macroCandidates.length>=200)break;
+        macroCandidates.push({source,name:m[1],arity:Number(m[2]??0)});
+      }
+      if(macroCandidates.length>=200)break;
+    }
+    return { root, sources, counts, notes, coverage, macroCandidates,
       rootEvidence:{hasClass:parsed.hasClass,hasBody:parsed.hasBody,titles:parsed.titles} };
   });
   return { name: path.basename(filename), sha256: createHash('sha256').update(bytes).digest('hex'),

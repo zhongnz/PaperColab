@@ -36,6 +36,7 @@ def run(browser,url,operator_token):
     operator.get_by_role("button",name="Open the estuary example").click()
     expect(operator.locator("#project-title")).to_have_text("Estuary field notes")
     expect(operator.locator("#provision-panel")).to_be_visible()
+    expect(operator.locator("#provision-account")).to_be_enabled()
     operator.locator("#account-name").fill("Pilot collaborator")
     operator.get_by_role("button",name="Create local account").click()
     expect(operator.locator("#provision-result")).to_be_visible()

@@ -303,3 +303,34 @@ test('literal optional citation notes and simple opaque inline text retain exact
     assert.equal(B.parseFile('See '+raw+'.').blocks[0].kind,'raw');
   }
 });
+
+test('bounded inline comments preserve exact line endings and never become plain text', () => {
+  for (const newline of ['\n','\r\n']) {
+    const comment='% reviewer note  '+newline;
+    const source='First sentence. '+comment+'Second sentence.';
+    const file=B.parseFile(source), p=file.blocks[0];
+    assert.equal(p.kind,'paragraph');
+    assert.deepEqual(B.tokens(p.rich),[comment]);
+    const changed=append(p.rich,' Added.');
+    B.editVisual(file,p,changed);
+    assert.ok(B.exportText(file).includes(comment));
+    assert.ok(B.exportText(file).endsWith('Second sentence. Added.'));
+    assert.deepEqual(B.tokens(B.parseFile(B.exportText(file)).blocks[0].rich),[comment]);
+    const marked=clone(changed);
+    marked.content[0].content.find(n=>n.type==='texToken').marks=[{type:'bold'}];
+    assert.throws(()=>B.editVisual(file,p,marked),/protected comments/);
+    assert.throws(()=>B.editVisual(file,p,{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Discarded comment'}]}]}),/citation and math/);
+  }
+  assert.equal(B.parseFile('% only a comment\n').blocks[0].kind,'raw');
+  assert.equal(B.parseFile('Text \\textbf{a% note\nb}.').blocks[0].kind,'raw');
+});
+
+test('explicitly delimited zero-argument standard macros are preserved; unknown project macros stay raw',()=>{
+  const source='Use \\LaTeX{} with \\ldots{} in this sentence.';
+  const f=B.parseFile(source),p=f.blocks[0];
+  assert.equal(p.kind,'paragraph');
+  assert.deepEqual(B.tokens(p.rich),['\\LaTeX{}','\\ldots{}']);
+  B.editVisual(f,p,append(p.rich,' Done.'));
+  assert.equal(B.exportText(f),source+' Done.');
+  assert.equal(B.parseFile('Use \\custom{} here.').blocks[0].kind,'raw');
+});

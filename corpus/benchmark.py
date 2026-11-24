@@ -193,6 +193,7 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
             return result
         root=selected["root"]
         result.update(root=root,coverage=selected["coverage"],static_counts=selected["counts"],
+                      macro_candidates=selected.get("macroCandidates",[]),
                       root_selection="reviewed-override" if override else "unique-candidate" if len(report["roots"])==1 else "literal-title-match")
         engine=paper.get("engine") or "pdflatex"
         result["engine"]=engine

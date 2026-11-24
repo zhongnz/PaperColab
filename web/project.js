@@ -257,6 +257,7 @@
     $('actor').disabled=$('use-token').disabled=$('sign-out').disabled=value;
     $('workspace-nav').inert=value;
     $('provision-panel').inert=value;
+    $('provision-account').disabled=$('list-accounts').disabled=value;
     $('project-settings').inert=value;
     $('create-agent-task').disabled=value||!$('delegate-cell').options.length||!$('delegate-assistant').options.length;
     $('refresh-agent-tasks').disabled=value;

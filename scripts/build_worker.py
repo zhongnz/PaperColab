@@ -102,11 +102,21 @@ def build(data, root, engine, work):
                              stdout=stream, stderr=subprocess.STDOUT, check=False)
     pdf = out / (main.stem + ".pdf")
     if run.returncode or not pdf.is_file():
+        # latexmk's tail often contains only a generic status. Retain the
+        # first explicit TeX error and a few continuation lines for local
+        # diagnosis, without increasing the host log cap or uploading logs.
+        first = []
         with log.open("rb") as stream:
-            # The end of latexmk's log includes its first reported failure and the final engine status.
-            stream.seek(max(0, log.stat().st_size - 6000))
+            for line in stream:
+                if re.search(rb"^(?:! |[^:\r\n]{1,500}:\d+: )",line):
+                    first.append(line[:500])
+                    for _ in range(3):
+                        first.append(stream.readline(500))
+                    break
+            stream.seek(max(0, log.stat().st_size - 4500))
             tail = stream.read().decode("utf-8", "replace")
-        raise ValueError("TeX build failed.\n" + tail)
+        detail = b"".join(first).decode("utf-8","replace")
+        raise ValueError("TeX build failed.\n" + detail + "\n" + tail)
     if not 5 < pdf.stat().st_size <= 64 * MIB:
         raise ValueError("PDF is empty or exceeds 64 MiB.")
     contents = pdf.read_bytes()
