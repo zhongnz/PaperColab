@@ -2,6 +2,8 @@
 
 PaperColab is an open-source project for writing and reviewing scientific manuscripts together. The offline editor opens an existing LaTeX project, lets an author edit a supported block visually or in source, and exports a project ZIP ready for its usual TeX build.
 
+The [product strategy and governance](STRATEGY.md) proposes a wider research workspace around this editor. The [systems and architecture assessment](docs/platform-architecture.md) compares platform options. Platform selection is open. The LibrePaper cell trial remains an experiment because it has not met the contracts named in the strategy.
+
 ## Edit a manuscript
 
 Open **web/index.html** and select **Open example editor**. For your own paper, choose a project ZIP, select a manuscript root and click **Edit manuscript**. The outline lists the files and blocks. Choose a paragraph or section heading to edit.
