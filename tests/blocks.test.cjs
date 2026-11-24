@@ -157,3 +157,51 @@ test('editing prose preserves multiline math tokens, textit semantics and raw ma
     assert.deepEqual(B.parseFile(contents).blocks.map(b=>b.kind), ['raw']);
   }
 });
+
+test('structural transactions preserve unrelated bytes, IDs and protected tokens', () => {
+  const text = 'First café $x$.\r\n\r\nSecond paragraph.\r\n\r\n\\begin{tabular}{c}x\\end{tabular}\r\n';
+  const original = B.parseFile(text);
+  const [a,b,raw] = original.blocks;
+  assert.equal(a.kind,'paragraph'); assert.equal(b.kind,'paragraph'); assert.equal(raw.kind,'raw');
+  const run = (f,id,action,options) => B.structural(f,id,action,options);
+  let r = run(original,a.id,'insert',{kind:'paragraph'});
+  const added = r.selectedId;
+  assert.notEqual(added,b.id);
+  assert.equal(B.exportText(original),text);
+  assert.equal(B.current(r.file,r.file.blocks.find(x=>x.id===raw.id)),B.current(original,raw));
+  assert.equal(B.current(r.file,r.file.blocks.find(x=>x.id===b.id)),'Second paragraph.');
+  r = run(r.file,added,'move-down');
+  assert.deepEqual(r.file.blocks.map(x=>x.id),[a.id,b.id,added,raw.id]);
+  r = run(r.file,added,'convert');
+  assert.equal(r.file.blocks.find(x=>x.id===added).kind,'heading');
+  r = run(r.file,added,'convert');
+  r = run(r.file,added,'delete');
+  assert.deepEqual(r.file.blocks.map(x=>x.id),[a.id,b.id,raw.id]);
+  r = run(r.file,a.id,'split',{offset:6});
+  const split = r.selectedId;
+  assert.notEqual(split,added);
+  assert.deepEqual(B.tokens(r.file.blocks.find(x=>x.id===split).rich),['$x$']);
+  r = run(r.file,a.id,'merge-next');
+  assert.deepEqual(B.tokens(r.file.blocks.find(x=>x.id===a.id).rich),['$x$']);
+  assert.equal(B.current(r.file,r.file.blocks.find(x=>x.id===raw.id)),B.current(original,raw));
+  assert.throws(()=>run(r.file,b.id,'move-down'),/boundary/);
+  assert.throws(()=>run(r.file,raw.id,'delete'),/preserved/i);
+  assert.equal(B.exportText(original),text);
+});
+test('structural editing includes prior edits and keeps mixed line endings outside the patch', () => {
+  const text = 'First.\r\n\r\nSecond.\n\nThird.\r\n';
+  const f = B.parseFile(text);
+  const [a,b,c] = f.blocks;
+  B.editSource(f,c,'Third revised.');
+  const r = B.structural(f,b.id,'insert',{kind:'heading'});
+  assert.equal(B.exportText(r.file), 'First.\r\n\r\nSecond.\r\n\r\n\\section{New section}\r\n\r\n\n\nThird revised.\r\n');
+  assert.equal(r.file.blocks.find(x=>x.id===c.id).kind,'paragraph');
+  assert.equal(B.current(r.file,r.file.blocks.find(x=>x.id===c.id)),'Third revised.');
+});
+test('structural split refuses invalid caret and never mutates input', () => {
+  const f = B.parseFile('A 🐋 and $x$.');
+  const p = f.blocks[0];
+  assert.throws(()=>B.structural(f,p.id,'split',{offset:3}),/Unicode/);
+  assert.throws(()=>B.structural(f,p.id,'split',{offset:0}),/caret/);
+  assert.equal(B.exportText(f),f.original);
+});

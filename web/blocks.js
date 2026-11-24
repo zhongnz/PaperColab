@@ -237,6 +237,129 @@
     return parts.join('');
   }
 
+  // Validate structural edits against exact expected source ranges; identities
+  // follow content, not parse order. No mutation occurs until validation passes.
+  function structural(file, id, action, options = {}) {
+    const text = exportText(file);
+    let shift = 0;
+    const rows = file.blocks.map(block => {
+      const source = current(file, block);
+      const from = block.from + shift, to = from + source.length;
+      shift += source.length - (block.to - block.from);
+      return { id: block.id, kind: block.kind, rich: rich(file, block), source, from, to };
+    });
+    const i = rows.findIndex(row => row.id === id), row = rows[i];
+    if (!row?.rich) throw new Error('Select an editable cell; preserved LaTeX cannot be changed structurally.');
+    const eol = text.match(/\r\n|\r|\n/)?.[0] ?? '\n', sep = eol + eol;
+    let nextId = rows.reduce((n, r) => Math.max(n, r.id + 1), file.nextId ?? 1);
+    const fresh = () => nextId++;
+    const piece = (id, kind, source) => ({ id, kind, source });
+    let start = row.from, end = row.to, items = [], selectedId = id;
+    let prefix = '', suffix = '', gap = sep;
+    const neighbour = index => {
+      const other = rows[index];
+      if (!other?.rich) throw new Error('Adjacent editable cells are required. Preserved LaTeX is a boundary.');
+      return other;
+    };
+    switch (action) {
+      case 'insert': {
+        start = end = row.to;
+        const kind = options.kind === 'heading' ? 'heading' : 'paragraph';
+        selectedId = fresh();
+        items = [piece(selectedId, kind, kind === 'heading' ? '\\section{New section}' : 'New paragraph.')];
+        prefix = suffix = sep;
+        break;
+      }
+      case 'delete':
+        selectedId = rows[i+1]?.id ?? rows[i-1]?.id ?? null;
+        break;
+      case 'move-up':
+      case 'move-down': {
+        const other = neighbour(i + (action === 'move-up' ? -1 : 1));
+        const [first, second] = action === 'move-up' ? [other, row] : [row, other];
+        start = first.from; end = second.to;
+        gap = text.slice(first.to, second.from);
+        if (!/^\s*$/.test(gap)) throw new Error('The gap contains source that must be preserved.');
+        if (!/\n[ \t\r]*\n|\r[ \t]*\r/.test(gap)) gap += sep;
+        items = [second, first];
+        prefix = suffix = sep;
+        break;
+      }
+      case 'merge-next': {
+        const other = neighbour(i+1);
+        if (row.kind !== 'paragraph' || other.kind !== 'paragraph')
+          throw new Error('Only adjacent paragraphs can be merged.');
+        end = other.to;
+        if (!/^\s*$/.test(text.slice(row.to, other.from)))
+          throw new Error('The gap contains source that must be preserved.');
+        items = [piece(id, 'paragraph', row.source + ' ' + other.source)];
+        break;
+      }
+      case 'split': {
+        if (row.kind !== 'paragraph') throw new Error('Only paragraphs can be split.');
+        const offset = options.offset;
+        const left = [], right = [];
+        let cursor = 0;
+        for (const node of row.rich.content[0].content ?? []) {
+          const size = node.type === 'text' ? node.text.length : 1;
+          if (cursor + size <= offset) left.push(node);
+          else if (cursor >= offset) right.push(node);
+          else {
+            const at = offset - cursor;
+            if (node.type !== 'text' || /[\uD800-\uDBFF]/.test(node.text[at-1]) && /[\uDC00-\uDFFF]/.test(node.text[at]))
+              throw new Error('Choose a text boundary outside a protected token or Unicode character.');
+            left.push({...node, text: node.text.slice(0, at)});
+            right.push({...node, text: node.text.slice(at)});
+          }
+          cursor += size;
+        }
+        if (!Number.isInteger(offset) || offset <= 0 || offset >= cursor)
+          throw new Error('Place the caret inside a paragraph to split it.');
+        const a = serialize(doc(left)).replace(/[ \t\r\n]+$/, '');
+        const c = serialize(doc(right)).replace(/^[ \t\r\n]+/, '');
+        if (!a.trim() || !c.trim()) throw new Error('Both new paragraphs must contain content.');
+        selectedId = fresh();
+        items = [piece(id, 'paragraph', a), piece(selectedId, 'paragraph', c)];
+        break;
+      }
+      case 'convert': {
+        const kind = row.kind === 'paragraph' ? 'heading' : 'paragraph';
+        const content = serialize(row.rich);
+        if (!content.trim()) throw new Error('Enter content before changing the cell type.');
+        items = [piece(id, kind, kind === 'heading' ? '\\section{' + content + '}' : content)];
+        prefix = suffix = sep;
+        break;
+      }
+      default: throw new Error('Unknown structural operation.');
+    }
+    let replacement = prefix;
+    const expected = [];
+    for (const item of items) {
+      if (expected.length) replacement += gap;
+      const from = start + replacement.length;
+      replacement += item.source;
+      expected.push({...item, from, to: start + replacement.length});
+    }
+    replacement += suffix;
+    const candidate = text.slice(0, start) + replacement + text.slice(end);
+    const delta = replacement.length - (end - start);
+    for (const old of rows) {
+      if (old.to <= start) expected.push(old);
+      else if (old.from >= end) expected.push({...old, from: old.from + delta, to: old.to + delta});
+      else if (old.from < start || old.to > end) throw new Error('The operation overlaps another cell.');
+    }
+    expected.sort((a, b) => a.from - b.from);
+    const parsed = parseFile(candidate, {root: Boolean(options.root)});
+    if (parsed.blocks.length !== expected.length || parsed.blocks.some((block, j) => {
+      const want = expected[j];
+      return block.kind !== want.kind || block.from !== want.from || block.to !== want.to ||
+        current(parsed, block) !== want.source;
+    })) throw new Error('The operation changes an unexpected LaTeX boundary. No changes were made.');
+    for (let j = 0; j < parsed.blocks.length; j++) parsed.blocks[j].id = expected[j].id;
+    parsed.nextId = nextId;
+    return {file: parsed, selectedId};
+  }
+
   function coverage(file) {
     const report = {
       editableParagraphs: 0, editableHeadings: 0, fallbackParagraphs: 0, fallbackHeadings: 0, preservedBlocks: 0
@@ -255,5 +378,5 @@
       .map(([command, blocks]) => ({ command, blocks }));
     return report;
   }
-  globalThis.PaperColabBlocks = { parseFile, current, rich, editVisual, editSource, exportText, preview, tokens, coverage };
+  globalThis.PaperColabBlocks = { parseFile, current, rich, editVisual, editSource, exportText, preview, tokens, coverage, structural };
 })();

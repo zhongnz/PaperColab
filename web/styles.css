@@ -162,3 +162,7 @@ button:disabled{cursor:default;opacity:.46}
 .cell-source button{margin-right:6px}
 .cell-status{font-size:.8rem;color:var(--muted);margin:6px 0 0}
 @media (hover:none){.document .cell-header{opacity:1}}
+
+.cell-operations{display:flex;flex-wrap:wrap;gap:5px;padding:6px 8px;border-top:1px solid var(--line)}
+.cell-operations button{font:inherit;font-size:.73rem;padding:4px 7px;border:1px solid var(--line);border-radius:4px;background:#fcfcf8;color:var(--ink)}
+.cell-operations button:disabled,#undo-structure:disabled{opacity:.5}

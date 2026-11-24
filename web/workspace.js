@@ -5,9 +5,10 @@
   const B = PaperColabBlocks, editors = PaperColabEditors;
   let session, files = new Map(), path, block, visual, source, pending = false, exporting = false;
   let saved = new Map(), onClose, downloadFile;
-  let mode = 'document', mounted = new Map(), drafts = new Map();
+  let mode = 'document', mounted = new Map(), drafts = new Map(), structuralHistory = new Map();
+  const checkpointChanged = (name, part) => part.original !== session.data.files.get(name).text;
   const multi = () => mode === 'document' || mode === 'cells';
-  const modeButtons = () => [...$('editor-views').querySelectorAll('button')];
+  const modeButtons = () => [...$('editor-views').querySelectorAll('[data-view]')];
   const normalise = value => value.replace(/\r\n?/g, '\n');
   const file = () => files.get(path);
 
@@ -21,7 +22,8 @@
   function changes() {
     const changed = new Map();
     for (const [name, part] of files) {
-      if (part.edits.size) changed.set(name, B.exportText(part));
+      const text = B.exportText(part);
+      if (text !== session.data.files.get(name).text) changed.set(name, text);
     }
     return changed;
   }
@@ -54,6 +56,9 @@
       button.disabled = locked;
       button.setAttribute('aria-pressed', String(button.dataset.view === mode));
     }
+    $('undo-structure').hidden = mode !== 'cells';
+    $('undo-structure').disabled = locked || !structuralHistory.get(path)?.length || Boolean(file()?.edits.size);
+    for (const el of $('multi-surface').querySelectorAll('[data-structure]')) el.disabled = locked;
     $('back-report').disabled = locked;
     $('export-project').disabled = locked;
     for (const el of $('block-list').children) el.disabled = locked;
@@ -68,7 +73,8 @@
       $('edit-redo').disabled = locked || !editors.canRedo(visual);
     }
     const n = counts();
-    $('edit-count').textContent = exporting ? 'Exporting…' : pending ? 'Unapplied source edit' : n ? n + (n === 1 ? ' edited block' : ' edited blocks') : 'Original manuscript';
+    const structure = [...files].some(([name, part]) => checkpointChanged(name, part));
+    $('edit-count').textContent = exporting ? 'Exporting…' : pending ? 'Unapplied source edit' : structure ? 'Structural changes' : n ? n + (n === 1 ? ' edited block' : ' edited blocks') : 'Original manuscript';
   }
   function refreshTitle(item = block) {
     const row = [...$('block-list').children].find(el => el.dataset.id === String(item?.id));
@@ -85,6 +91,29 @@
     const eol = B.current(file(), item).match(/\r\n|\r|\n/)?.[0] ?? file().original.match(/\r\n|\r|\n/)?.[0] ?? '\n';
     return value.replace(/\n/g, eol);
   }
+
+  function structural(part, action, options = {}) {
+    if (pending || exporting) return;
+    try {
+      const old = file();
+      const result = B.structural(old, part.id, action, {...options, root: session.data.roots.includes(path)});
+      if (!structuralHistory.has(path)) structuralHistory.set(path, []);
+      structuralHistory.get(path).push(old);
+      files.set(path, result.file);
+      showFile(path, result.selectedId);
+      note('Cell structure updated. Use Undo structure to restore the preceding checkpoint.');
+    } catch (error) { note(error.message); }
+  }
+  $('undo-structure').onclick = () => {
+    if (pending || exporting || file()?.edits.size) return;
+    const history = structuralHistory.get(path);
+    if (!history?.length) return;
+    const old = history.pop();
+    old.nextId = Math.max(old.nextId ?? 1, file().nextId ?? 1);
+    files.set(path, old);
+    showFile(path, block?.id);
+    note('Previous cell structure restored.');
+  };
 
   // Both multi-cell views use the same parsed file and edit map as split view.
   // No content is copied into a second authoritative document.
@@ -177,6 +206,27 @@
         header.append(fmt);
       }
       header.append(toggle, revert);
+      if (mode === 'cells') {
+        const operations = document.createElement('div');
+        operations.className = 'cell-operations';
+        const add = (name, action, options) => {
+          const control = button(name, () => structural(part, action, typeof options === 'function' ? options() : options));
+          control.dataset.structure = action;
+          control.onmousedown = e => e.preventDefault();
+          operations.append(control);
+        };
+        add('Add paragraph', 'insert', {kind: 'paragraph'});
+        add('Add heading', 'insert', {kind: 'heading'});
+        add('Move up', 'move-up');
+        add('Move down', 'move-down');
+        if (part.kind === 'paragraph') {
+          add('Split at caret', 'split', () => ({offset: editor.state.selection.from - 1}));
+          add('Merge next', 'merge-next');
+        }
+        add(part.kind === 'heading' ? 'Make paragraph' : 'Make heading', 'convert');
+        add('Delete cell', 'delete');
+        cell.append(operations);
+      }
       area.addEventListener('input', updateDraft);
       sourcePanel.append(area, apply, discard, message);
       cell.append(sourcePanel);
@@ -250,7 +300,7 @@
     });
     updateControls();
   }
-  function showFile(name) {
+  function showFile(name, preferredId = null) {
     path = name;
     $('editor-file').value = name;
     const part = openFile(name);
@@ -275,12 +325,12 @@
       return button;
     });
     menu.replaceChildren(...buttons);
-    const first = part.blocks.find(b => b.kind === 'paragraph') ?? part.blocks.find(b => b.rich) ?? part.blocks[0];
+    const first = part.blocks.find(b => b.id === preferredId) ?? part.blocks.find(b => b.kind === 'paragraph') ?? part.blocks.find(b => b.rich) ?? part.blocks[0];
     if (multi()) showMulti(first); else showBlock(first);
   }
 
   function open(archiveSession, selection, close, save) {
-    if (session !== archiveSession) { files = new Map(); saved = new Map(); path = null; mode = 'document'; }
+    if (session !== archiveSession) { files = new Map(); saved = new Map(); path = null; mode = 'document'; structuralHistory = new Map(); }
     session = archiveSession; onClose = close; downloadFile = save;
     const paths = [selection.root, ...selection.sources.filter(name => name !== selection.root)]
       .filter(name => /\.(?:tex|ltx)$/i.test(name) && session.data.files.get(name)?.text !== undefined);
@@ -342,6 +392,6 @@
   window.addEventListener('beforeunload', event => {
     if (unsaved()) { event.preventDefault(); event.returnValue = ''; }
   });
-  function reset() { unmount(); session = null; files = new Map(); saved = new Map(); path = block = null; pending = false; }
+  function reset() { unmount(); session = null; files = new Map(); saved = new Map(); path = block = null; pending = false; structuralHistory = new Map(); }
   globalThis.PaperColabWorkspace = { open, unsaved, reset };
 })();
