@@ -39,9 +39,9 @@ A project may need a jointly edited document, an immutable dataset in an institu
 | --- | --- | --- |
 | Archive inspector and isolated TeX build | Project import, reference checks, human-readable findings and a reproducible publication check | A compiling PDF establishes buildability. Scientific validity, journal acceptance and complete project provenance require other evidence. |
 | Tiptap, CodeMirror and the LaTeX source-range model | Familiar visual editing and precise source changes with preserved raw spans | The prototype edits a subset of LaTeX. Durable shared identity, ownership and review authority need a service beyond the current prototype. |
-| Export regression and manuscript corpus | Byte comparisons, edited PDF checks and pinned source examples that can test any future platform | One published manuscript and the example have passed an edited build. The 20-paper corpus target and real-team trials remain open. |
+| Export regression and manuscript corpus | Byte comparisons, edited PDF checks and pinned source examples that can test any future platform | The pinned emcee manuscript has an edited build: 15 visually editable paragraphs, 7 editable headings, and 50 paragraph ranges kept as original LaTeX. The 20-paper corpus target and real-team trials remain open. |
 
-The current parser numbers blocks in parse order. The browser holds edits in a session map. These choices work for an offline tool. A shared service must be able to identify the same object after an edit, move or reconnect, and decide who may change it. Keep the parser's offsets as coordinates into a particular source revision. Give persistent objects their own identity. [Block parser](https://github.com/zhongnz/PaperColab/blob/473e9874480f896ba0b065d70671ca1a3485c868/web/blocks.js) · [Workspace state](https://github.com/zhongnz/PaperColab/blob/473e9874480f896ba0b065d70671ca1a3485c868/web/workspace.js) · [Verified builds](https://github.com/zhongnz/PaperColab/actions/runs/45260813525)
+The current parser numbers blocks in parse order. The browser holds edits in a session map. These choices work for an offline tool. A shared service must be able to identify the same object after an edit, move or reconnect, and decide who may change it. Keep the parser's offsets as coordinates into a particular source revision. Give persistent objects their own identity. [Block parser](https://github.com/zhongnz/PaperColab/blob/main/web/blocks.js) · [Workspace state](https://github.com/zhongnz/PaperColab/blob/main/web/workspace.js) · [Verified builds](https://github.com/zhongnz/PaperColab/actions/runs/45260813525)
 
 ## What LibrePaper changes
 
@@ -57,6 +57,8 @@ Three design details matter more than the number of features.
 
 These findings come from the published documentation and the pinned upstream source. Deployment cost, implementation effort and compatibility with PaperColab's governance model still need a comparative trial. [Upstream revision reviewed](https://github.com/LibrePaper/librepaper/tree/c74c348d926d9b06f54da52ffb2ea18141267ba5)
 
+The local cell trial does not select LibrePaper. It has not met the three contracts in the strategy: the same review authority for visual and source edits, a defined result when offline edits overlap, and a public anchor API. [Contracts the LibrePaper trial has not met](../STRATEGY.md#contracts-the-librepaper-trial-has-not-met) · [Pull request 4](https://github.com/zhongnz/PaperColab/pull/4)
+
 ## Platform choices
 
 | Option | When it earns investment | Main cost or uncertainty |
@@ -66,7 +68,7 @@ These findings come from the published documentation and the pinned upstream sou
 | Build a PaperColab collaboration core with open-source components | The mandatory contracts fail on existing platforms or integration introduces more complexity than operating the service directly | Owning sync, recovery, permissions, upgrades and support for every supported workflow |
 | Maintain a long-lived LibrePaper fork | A necessary change cannot be accepted upstream, and a named team can fund and test the divergence | Permanent merge, compatibility, release and support responsibility |
 
-Evaluate extension and interoperability first. Include the original plan’s PostgreSQL and Yjs/Hocuspocus proposal as a candidate for an independent core. Keep the working editor as a reference client and its fidelity tests as a common benchmark under every option.
+Evaluate extension and interoperability first. A PostgreSQL and Yjs/Hocuspocus service remains a candidate for an independent core. That proposal is not recorded in this repository. Keep the working editor as a reference client and its fidelity tests as a common benchmark under every option.
 
 ## How to choose
 

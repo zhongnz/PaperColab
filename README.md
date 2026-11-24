@@ -1,12 +1,8 @@
-# PaperColab · Open research workspace
-
-PaperColab aims to give research teams an open, AI-native workspace for managing projects, connecting evidence, coordinating people and tools, and publishing work that others can verify and reuse.
-
-Start with the [product strategy and governance](STRATEGY.md). The [systems and architecture assessment](docs/platform-architecture.md) maps those commitments to platform decisions and evaluates LibrePaper as a possible foundation.
-
-## First implementation
+# PaperColab
 
 PaperColab is an open-source project for writing and reviewing scientific manuscripts together. The offline editor opens an existing LaTeX project, lets an author edit a supported block visually or in source, and exports a project ZIP ready for its usual TeX build.
+
+The [product strategy and governance](STRATEGY.md) proposes a wider research workspace around this editor. The [systems and architecture assessment](docs/platform-architecture.md) compares platform options. Platform selection is open. The LibrePaper cell trial remains an experiment because it has not met the contracts named in the strategy.
 
 ## Edit a manuscript
 

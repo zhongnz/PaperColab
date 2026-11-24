@@ -68,7 +68,17 @@ Two forms of governance matter. Product stewardship determines which commitments
 2. **Capability priorities.** For each proposed feature, record the beneficiary, outcome, related research objects, authority required, existing alternatives, owner and evidence of demand. Identify dependencies and collective value across features.
 3. **Information and systems.** Assign one authority for each kind of record, define exchange and recovery requirements, and map the capabilities to services. The companion architecture assessment starts here. [Systems and platform options](docs/platform-architecture.md)
 4. **Tools and workflows.** Compare implementation options using the same evidence. Then select representative workflows to validate the architecture across different disciplines, team roles and authoring styles.
-5. **Pilot and investment review.** Compare measured outcomes with the charter. The existing pilot proposes 18 successful source round trips out of 20 and three independent groups active beyond week four. Those targets evaluate the authoring pilot. The broader management objectives above require their own evidence. [Existing pilot criteria](https://github.com/zhongnz/PaperColab/blob/473e9874480f896ba0b065d70671ca1a3485c868/docs/pilot.md)
+5. **Pilot and investment review.** Compare measured outcomes with the charter. The existing pilot proposes 18 successful source round trips out of 20 and three independent groups active beyond week four. A paper counts toward those 18 only after its editable paragraph count, editable heading count, and fallback commands are recorded. Those targets evaluate the authoring pilot. The broader management objectives above require their own evidence. [Existing pilot criteria](docs/pilot.md)
+
+## Contracts the LibrePaper trial has not met
+
+[Pull request 4](https://github.com/zhongnz/PaperColab/pull/4) stays on `experiment/librepaper-cells`. It is a local spike, not a decision to extend LibrePaper. Three contracts are still open.
+
+1. **Same authority for both editors.** A visual apply calls LibrePaper `trackedSplices` and records a suggestion attributed to that author. A source apply calls `untrackedSplices`, which writes the text immediately and records an empty actor. The two panes do not share one review record.
+2. **A defined result for overlapping offline edits.** With collaborator sync off, each replica accepts its own apply. Turning sync back on merges the Loro text. The stale-draft guard only compares the replica being written, so it does not see an edit that was never imported. Upstream documents `unsuggestedText` as the text sync sees, with pending insertions removed. The trial exchanges full snapshots, so it shows unaccepted insertions that a LibrePaper server session may not propagate.
+3. **A public anchor API.** After an intentional boundary edit, the trial writes the cell's `place` field inside LibrePaper's private anchor map. An upstream function has to own that update before the adapter can be promoted.
+
+The trial text is the ASCII Estuary paragraph, so its splice offsets are untested on the multibyte manuscripts the offline editor already handles. Choose a platform after these three contracts have a reproducible result.
 
 At each investment review the product steward should record a decision to build, integrate, investigate or defer, the reason, an accountable owner and the evidence that would reopen it. This keeps a broad feature portfolio visible while the team delivers in increments.
 
