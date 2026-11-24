@@ -614,7 +614,7 @@ class Service:
                 status = "blocked"
             elif not last:
                 status = "ready"
-            elif last["outcome"] == "revise" or last["task_status"] in {"cancelled","expired","rejected","stale","unavailable"}:
+            elif last["outcome"] == "revise" or last["task_status"] in {"cancelled","expired","rejected","stale","unavailable","needs-review"}:
                 status = "retry"
             elif last["task_status"] == "accepted":
                 status = "evaluation"

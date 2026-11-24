@@ -197,6 +197,56 @@ def exercise(browser, port, width):
         review.get_by_role("button",name="Accept",exact=True).click()
         expect(page.locator("#agent-task-list")).to_contain_text("Quill · accepted")
         expect(page.get_by_role("textbox",name="Visual block text")).to_contain_text("three readings")
+        expect(page.locator("#create-workflow")).to_be_enabled()
+        page.locator("#workflow-title").fill("Sampling workflow")
+        page.locator("#workflow-objective").fill("Coordinate two reviewed manuscript revisions.")
+        page.get_by_role("button",name="Create research workflow",exact=True).click()
+        expect(page.locator("#workflow-list")).to_contain_text("Sampling workflow")
+        def add_step(title, dependency=None):
+            page.locator("#workflow-step-title").fill(title)
+            page.locator("#workflow-cell").select_option(stable_id)
+            page.locator("#workflow-assistant").select_option(label="Quill")
+            page.locator("#workflow-context").select_option(context_ids[0])
+            page.locator("#workflow-instructions").fill("Use only supplied evidence.")
+            page.locator("#workflow-criteria").fill("Confirm the sampling statement.")
+            if dependency:
+                page.locator("#workflow-dependencies").select_option(dependency)
+            page.get_by_role("button",name="Add workflow step",exact=True).click()
+            step=page.locator(".workflow-step").filter(has_text=title)
+            expect(step).to_have_count(1)
+            expect(page.get_by_role("button",name="Add workflow step",exact=True)).to_be_enabled()
+            return step
+        first=add_step("Check sampling")
+        second=add_step("Refine sampling",first.get_attribute("data-step-id"))
+        expect(first).to_have_attribute("data-status","ready")
+        expect(second).to_have_attribute("data-status","blocked")
+        expect(second.get_by_role("button",name="Launch step")).to_have_count(0)
+        first.get_by_role("button",name="Launch step").click()
+        expect(page.locator("#delegated-credential")).to_be_visible()
+        task_id=page.locator("#delegated-task-id").inner_text()
+        secret=page.locator("#delegated-token").input_value()
+        endpoint=f"http://127.0.0.1:{port}/api/delegated/{task_id}"
+        headers={"Authorization":"Bearer "+secret}
+        result=page.request.get(endpoint+"/context",headers=headers)
+        assert result.ok
+        task=result.json()
+        assert "Acceptance criteria:" in task["instructions"]
+        after=task["cell"]["source"].replace("three readings","four readings")
+        result=page.request.post(endpoint+"/proposal",headers=headers,
+            data={"after":after,"rationale":"Workflow fixture proposal.","evidence_ids":context_ids[:1]})
+        assert result.ok
+        page.get_by_role("button",name="Hide credential").click()
+        page.get_by_role("button",name="Refresh tasks and review").click()
+        expect(first).to_have_attribute("data-status","review")
+        review=page.locator("#queue article").filter(has_text="Workflow fixture proposal.")
+        review.get_by_role("button",name="Accept",exact=True).click()
+        expect(first).to_have_attribute("data-status","evaluation")
+        expect(second).to_have_attribute("data-status","blocked")
+        first.get_by_role("textbox",name="Assessment for Check sampling").fill("Reviewed against the fixture criteria.")
+        first.get_by_role("button",name="Pass evaluation").click()
+        expect(first).to_have_attribute("data-status","completed")
+        expect(second).to_have_attribute("data-status","ready")
+        expect(page.locator("#workflow-list")).to_contain_text("1/2 evaluated")
     page.close()
     assert not errors, errors
 

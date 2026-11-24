@@ -36,3 +36,7 @@ model framework's ephemeral state. A later execution adapter can invoke
 external orchestrators without granting them authority to approve outcomes.
 Evaluate frameworks against durable retries, human checkpoints, scoped
 credentials, event provenance and cost controls before selecting one.
+
+The hosted browser regression creates a two-step plan, submits a real restricted
+HTTP proposal, accepts it, verifies the dependent step stays blocked, records
+a passing evaluation, and verifies the dependent step becomes ready.

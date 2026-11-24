@@ -376,7 +376,7 @@
       title.textContent=w.title+' · '+w.completed+'/'+w.steps.length+' evaluated';
       objective.textContent=w.objective;card.append(title,objective);
       for(const step of w.steps){
-        const row=document.createElement('section');row.className='workflow-step';row.dataset.stepId=step.id;
+        const row=document.createElement('section');row.className='workflow-step';row.dataset.stepId=step.id;row.dataset.status=step.status;
         const heading=document.createElement('strong'),meta=document.createElement('p'),criteria=document.createElement('p');
         heading.textContent=step.position+'. '+step.title+' · '+step.status;
         meta.textContent='Depends on: '+(step.dependencies.map(id=>w.steps.find(s=>s.id===id)?.title??id).join(', ')||'None');
