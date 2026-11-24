@@ -1,4 +1,4 @@
-/* global PaperColabArchive, PaperColabInspect, PaperColabExample */
+/* global PaperColabArchive, PaperColabInspect, PaperColabExample, PaperColabWorkspace */
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -105,13 +105,17 @@
     $('report-heading').focus({ preventScroll: true });
   }
 
-  async function openFile(file, sample = false) {
+  function openEditor() {
+    if (!session || !selection) return;
+    PaperColabWorkspace.open(session, selection, () => $('open-editor').focus(), download);
+  }
+
+  async function openFile(file, sample = false, launchEditor = false) {
     if (!file) return;
     active?.abort();
     const controller = new AbortController();
     active = controller;
-    session = null;
-    selection = null;
+    const prior = session;
     $('error').hidden = true;
     $('start').hidden = false;
     $('report').hidden = true;
@@ -122,11 +126,21 @@
     try {
       const files = await PaperColabArchive.readArchive(file, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      session = { data: PaperColabInspect.inventory(files), name: file.name, sample };
+      const data = PaperColabInspect.inventory(files);
+      if (PaperColabWorkspace.unsaved() && !window.confirm('Discard your unexported edits and open this ZIP?')) {
+        if (prior) { $('start').hidden = true; $('report').hidden = false; }
+        return;
+      }
+      PaperColabWorkspace.reset();
+      session = { data, name: file.name, sample, blob: file };
       showReport();
+      if (launchEditor) openEditor();
     } catch (error) {
       if (controller.signal.aborted) return;
-      session = null;
+      if (prior && PaperColabWorkspace.unsaved()) {
+        $('start').hidden = true;
+        $('report').hidden = false;
+      } else { session = selection = null; }
       $('error').textContent = 'Could not inspect this ZIP. ' + error.message;
       $('error').hidden = false;
     } finally {
@@ -141,6 +155,8 @@
     openFile(file);
   };
   const demo = () => new File([Uint8Array.from(atob(PaperColabExample), char => char.charCodeAt(0))], sampleName, { type: 'application/zip' });
+  $('open-editor').onclick = openEditor;
+  $('example-editor').onclick = () => openFile(demo(), true, true);
   $('example').onclick = () => openFile(demo(), true);
   $('sample-download').onclick = () => download(demo(), sampleName);
   $('root').onchange = showRoot;

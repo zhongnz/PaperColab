@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>LaTeX export checker · PaperColab</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Manuscript editor · PaperColab</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,9 +15,9 @@
   </div></header>
   <main>
     <header class="intro">
-      <p class="overline">LaTeX migration</p>
-      <h1>Check your manuscript export<span class="dot">.</span></h1>
-      <p>Find missing sections, figures and references in a Prism or LaTeX project ZIP before you move your paper.</p>
+      <p class="overline">LaTeX workspace</p>
+      <h1>Open your manuscript<span class="dot">.</span></h1>
+      <p>Check the files in your project, edit a paragraph and take your LaTeX home. Every change stays on this device.</p>
     </header>
     <div id="start" class="start-grid">
       <section id="drop" class="drop" aria-labelledby="input-heading">
@@ -33,7 +33,8 @@
         <ul class="tree" aria-label="Files in the example manuscript">
           <li class="tree-root">main.tex</li><li>sections/methods.tex</li><li>references.bib</li>
         </ul>
-        <button id="example" type="button" class="text-button">Inspect example <span aria-hidden="true">→</span></button>
+        <div class="example-actions"><button id="example-editor" type="button" class="primary">Open example editor</button>
+          <button id="example" type="button" class="text-button">Inspect example <span aria-hidden="true">→</span></button></div>
       </aside>
     </div>
     <input id="file" type="file" accept=".zip,application/zip,application/x-zip-compressed" hidden>
@@ -49,6 +50,7 @@
       <div id="archive-notes"></div>
       <div id="root-panel">
         <label for="root">Manuscript root</label><select id="root"></select>
+        <button id="open-editor" type="button" class="primary">Edit manuscript</button>
         <h3 id="root-status"></h3>
         <div id="root-notes"></div><div id="references"></div>
       </div>
@@ -57,6 +59,46 @@
         <pre><code id="build-command"></code></pre>
         <button type="button" class="text-button" id="sample-download" hidden>Save the example ZIP ↓</button>
       </details>
+    </section>
+    <section id="workspace" aria-labelledby="edit-project-name" hidden>
+      <button id="back-report" type="button" class="text-button"><span aria-hidden="true">←</span> Archive report</button>
+      <header class="edit-header">
+        <h1 id="edit-project-name" tabindex="-1"></h1>
+        <div class="export-actions"><span id="edit-count" role="status"></span>
+          <button id="export-project" type="button" class="primary">Export project ZIP <span aria-hidden="true">↓</span></button></div>
+      </header>
+      <div class="edit-layout">
+        <aside class="outline" aria-labelledby="outline-label">
+          <p class="overline" id="outline-label">Manuscript outline</p>
+          <label for="editor-file">LaTeX file</label><select id="editor-file"></select>
+          <nav id="block-list" aria-label="Blocks in this file"></nav>
+        </aside>
+        <div class="sheet">
+          <p id="block-empty" hidden>No blocks in this file.</p>
+          <article id="block-detail">
+            <header class="block-head"><div><p class="block-locator" id="block-context"></p><h2 id="block-title"></h2></div>
+              <button type="button" class="text-button" id="revert-block">Revert block</button></header>
+            <section id="visual-section" aria-label="Visual editor">
+              <div class="pane-header"><h3>Visual editor</h3>
+                <div class="formatting" role="group" aria-label="Text formatting">
+                  <button id="fmt-bold" type="button" title="Bold" aria-label="Bold" aria-pressed="false"><b>B</b></button>
+                  <button id="fmt-italic" type="button" title="Italic" aria-label="Italic" aria-pressed="false"><i>I</i></button>
+                  <button id="edit-undo" type="button" aria-label="Undo" title="Undo">↶</button>
+                  <button id="edit-redo" type="button" aria-label="Redo" title="Redo">↷</button>
+                </div></div>
+              <div id="visual-surface"></div>
+            </section>
+            <p id="raw-explanation" hidden></p>
+            <section class="source-section" aria-label="Source editor">
+              <div class="pane-header"><h3>LaTeX source</h3></div>
+              <div id="source-surface"></div>
+              <div class="source-actions"><button type="button" id="apply-source" class="primary" hidden>Apply source</button>
+                <button type="button" id="discard-source" class="text-button" hidden>Discard draft</button></div>
+            </section>
+          </article>
+          <p id="edit-message" role="status"></p>
+        </div>
+      </div>
     </section>
     <section class="how" aria-labelledby="how-title">
       <h2 id="how-title">What the checker looks for</h2>
@@ -73,6 +115,11 @@
   <script src="archive.js"></script>
   <script src="inspect.js"></script>
   <script src="example.js"></script>
+  <script src="vendor/latex.min.js"></script>
+  <script src="vendor/engines.min.js"></script>
+  <script src="blocks.js"></script>
+  <script src="editors.js"></script>
+  <script src="workspace.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

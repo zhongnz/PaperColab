@@ -26,7 +26,7 @@ def demo_zip():
 
 def single_html():
     source = (WEB / "index.html").read_text(encoding="utf-8")
-    hashes = {"script": [], "style": []}
+    script_hashes = []
 
     def inline(match):
         tag = "script" if match[1] else "style"
@@ -34,14 +34,14 @@ def single_html():
         content = (WEB / path).read_text(encoding="utf-8")
         if tag == "script":
             content = content.replace("</script", r"<\/script")
-        digest = base64.b64encode(hashlib.sha256(content.encode()).digest()).decode()
-        hashes[tag].append("'sha256-" + digest + "'")
+            digest = base64.b64encode(hashlib.sha256(content.encode()).digest()).decode()
+            script_hashes.append("'sha256-" + digest + "'")
         return "<" + tag + ">" + content + "</" + tag + ">"
 
     source = re.sub(r'<script src="([^"]+)"></script>|<link rel="stylesheet" href="([^"]+)">', inline, source)
-    for tag, values in hashes.items():
-        source = source.replace(tag + "-src 'self'", tag + "-src " + " ".join(values))
+    source = source.replace("script-src 'self'", "script-src " + " ".join(script_hashes))
     notices = (REPO / "LICENSE").read_text(encoding="utf-8") + "\nzip.js\n" + (WEB / "vendor/zip-LICENSE.txt").read_text(encoding="utf-8")
+    notices += "\n" + (WEB / "vendor/editor-NOTICES.txt").read_text(encoding="utf-8")
     return source.replace("</html>", "<!-- Distribution licences\n" + notices.replace("--", "- -") + "\n-->\n</html>")
 
 

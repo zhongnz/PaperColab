@@ -1,0 +1,140 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+globalThis.zip = require('../web/vendor/zip-core.min.js');
+require('../web/vendor/latex.min.js');
+require('../web/blocks.js');
+require('../web/archive.js');
+const B = PaperColabBlocks;
+const A = PaperColabArchive;
+const tex = String.raw;
+const original = '\uFEFF' + [
+  tex`\documentclass{article}`, tex`% Original: é 🐋`, tex`\newcommand{\station}{A1}`,
+  tex`\begin{document}`, tex`\section*{Field notes}`, '',
+  tex`Paired readings at Café are \textbf{independent},`, tex`with $v_0$ and protocol~\cite{field}.`, '',
+  tex`% Comment with spaces  `, tex`\station{} on Tuesday.`, '',
+  tex`\begin{tikzpicture}`, tex`  \draw (0,0) -- (1,1); % inline`, tex`\end{tikzpicture}`, '',
+  tex`\begin{verbatim}`, tex` \unknown{  exact } $x$  `, tex`\end{verbatim}`, tex`\end{document}`, ''
+].join('\r\n');
+const clone = rich => structuredClone(rich);
+const append = (rich, text) => {
+  const value = clone(rich);
+  value.content[0].content.push({ type: 'text', text });
+  return value;
+};
+
+test('PEG ranges patch one supported block in a CRLF, BOM and Unicode manuscript', () => {
+  const f = B.parseFile(original, { root: true });
+  assert.equal(B.exportText(f), original);
+  const prose = f.blocks.find(b => b.kind === 'paragraph');
+  const heading = f.blocks.find(b => b.kind === 'heading');
+  assert.equal(B.current(f, heading), tex`\section*{Field notes}`);
+  assert.match(B.current(f, prose), /^Paired readings/);
+  assert.deepEqual(B.tokens(prose.rich), ['$v_0$', tex`\cite{field}`]);
+  assert.ok(f.blocks.filter(b => b.kind === 'raw').length >= 4);
+  B.editVisual(f, prose, append(prose.rich, ' Extra.'));
+  const expected = original.slice(0, prose.from) + B.current(f, prose) + original.slice(prose.to);
+  assert.deepEqual(Buffer.from(B.exportText(f)), Buffer.from(expected));
+  assert.ok(B.current(f, prose).endsWith(' Extra.'));
+  const f2 = B.parseFile(B.exportText(f), { root: true });
+  const raw = file => file.blocks.filter(b => b.kind === 'raw').map(b => Buffer.from(B.current(file, b)));
+  assert.deepEqual(raw(f2), raw(f));
+  B.editVisual(f, prose, clone(prose.rich));
+  assert.equal(f.edits.size, 0);
+  assert.equal(B.exportText(f), original);
+});
+
+test('headings and paragraphs patch independent original ranges in either edit order', () => {
+  const f = B.parseFile(original, { root: true });
+  const [h, p] = f.blocks.filter(b => b.rich);
+  B.editSource(f, p, 'A shorter paragraph.');
+  B.editSource(f, h, tex`\section*{Revised heading}`);
+  assert.equal(B.exportText(f), original.slice(0,h.from) + tex`\section*{Revised heading}` +
+    original.slice(h.to,p.from) + 'A shorter paragraph.' + original.slice(p.to));
+});
+
+test('formatting, typed TeX punctuation and nonbreaking space survive re-import', () => {
+  const f = B.parseFile('Original.'), p = f.blocks[0];
+  const plain = 'A # $ % & _ { } \\ ~ ^\u00a0';
+  const rich = { type: 'doc', content: [{ type: 'paragraph', content: [
+    { type: 'text', text: plain }, { type: 'text', text: 'marked', marks: [{ type: 'bold' }, { type: 'italic' }] }
+  ] }] };
+  B.editVisual(f, p, rich);
+  assert.ok(B.current(f, p).endsWith(tex`\textbf{\emph{marked}}`));
+  const imported = B.parseFile(B.exportText(f));
+  assert.deepEqual(imported.blocks[0].rich, rich);
+});
+
+test('source and visual modes protect citation and math tokens until explicitly edited in source', () => {
+  const t = tex`Measured $x$ following \cite{a}.`;
+  const f = B.parseFile(t), p = f.blocks[0], removed = clone(p.rich);
+  removed.content[0].content = removed.content[0].content.filter(n => n.type !== 'texToken');
+  assert.throws(() => B.editVisual(f, p, removed), /citation and math/);
+  assert.equal(B.current(f, p), t);
+  B.editSource(f, p, tex`See \cite{b} and $y$.`);
+  assert.deepEqual(B.tokens(B.rich(f, p)), [tex`\cite{b}`, '$y$']);
+  for (const draft of ['one\n\ntwo', tex`\undefined{z}`, tex`\section{X}`, 'unclosed {']) {
+    assert.throws(() => B.editSource(f, p, draft), /one supported/);
+    assert.equal(B.current(f, p), tex`See \cite{b} and $y$.`);
+  }
+  B.editSource(f, p, t);
+  assert.equal(f.edits.size, 0);
+});
+
+test('preserves uncertain grammar, unsupported constructs and over-limit UTF-8 as raw source', () => {
+  const cases = [tex`\iftrue x\fi`, tex`\catcode`, 'orphan {', tex`\custom{keep}`,
+    tex`\begin{align}x &= 2\end{align}`, '界'.repeat(180000)];
+  for (const s of cases) {
+    const f = B.parseFile(s);
+    assert.ok(f.blocks.length && f.blocks.every(b => b.kind === 'raw'));
+    assert.equal(B.exportText(f), s);
+    assert.throws(() => B.editSource(f, f.blocks[0], 'different'), /preserved/);
+  }
+});
+
+test('an untouched ZIP is byte-identical and a changed ZIP preserves paths, siblings and compressed assets', async () => {
+  const writer = new zip.ZipWriter(new zip.BlobWriter(), { useWebWorkers: false });
+  const path = './group/a/main.tex', asset = Uint8Array.from([0,255,128,1,2,13,10,7]);
+  await writer.add('./group/', undefined, { directory: true });
+  for (const [name, bytes] of [[path,Buffer.from(original)],['group/b/main.tex',Buffer.from('Independent.')],
+    ['group/a/image.png',asset],['group/b/latin1.tex',Uint8Array.from([0xf6,0xff])]]) {
+    await writer.add(name, new zip.Uint8ArrayReader(bytes), { level: 6, comment: 'field project' });
+  }
+  const blob = await writer.close(Uint8Array.from([65,66]));
+  const files = await A.readArchive(blob);
+  assert.equal(files.get('group/a/main.tex').text, original);
+  assert.ok(files.get('group/b/latin1.tex').skipped);
+  assert.strictEqual(await A.exportArchive(blob, new Map()), blob);
+  const f = B.parseFile(original, { root: true }), p = f.blocks.find(b => b.kind === 'paragraph');
+  B.editVisual(f, p, append(p.rich, ' Revised.'));
+  const after = await A.exportArchive(blob, new Map([['group/a/main.tex',B.exportText(f)]]));
+  assert.equal((await A.readArchive(after)).get('group/a/main.tex').text, B.exportText(f));
+  async function entries(archive) {
+    const r = new zip.ZipReader(new zip.BlobReader(archive), { useWebWorkers: false });
+    try {
+      const value = [];
+      for (const e of await r.getEntries()) value.push({ name:e.filename, directory:e.directory, comment:e.comment,
+        bytes:e.directory ? null : Buffer.from(await e.getData(new zip.Uint8ArrayWriter(), {checkSignature:true})),
+        compressed:e.directory ? null : Buffer.from(await e.getData(new zip.Uint8ArrayWriter(), {passThrough:true})) });
+      return { value, comment: Array.from(r.comment) };
+    } finally { await r.close(); }
+  }
+  const a = await entries(blob), b = await entries(after);
+  assert.deepEqual(a.comment,b.comment);
+  assert.deepEqual(a.value.map(e=>e.name),b.value.map(e=>e.name));
+  for (let i=0;i<a.value.length;i++) {
+    if (a.value[i].name === path) assert.deepEqual(b.value[i].bytes, Buffer.from(B.exportText(f)));
+    else assert.deepEqual(b.value[i],a.value[i]);
+  }
+});
+
+test('editing prose preserves multiline math tokens, textit semantics and raw macro definitions', () => {
+  const s = tex`\newcommand\section{word}` + '\r\n\r\n' + tex`A \textit{word} with $a` + '\r\n' + tex`+ b$.`;
+  const f = B.parseFile(s);
+  assert.deepEqual(f.blocks.map(b=>b.kind), ['raw','paragraph']);
+  const p = f.blocks[1];
+  B.editVisual(f, p, append(p.rich, ' Done.'));
+  assert.equal(B.exportText(f), s + ' Done.');
+  for (const contents of [tex`\emph{one \emph{two}}`,tex`A \verb|\section{literal}| here.`]) {
+    assert.deepEqual(B.parseFile(contents).blocks.map(b=>b.kind), ['raw']);
+  }
+});

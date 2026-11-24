@@ -1,6 +1,6 @@
 # Manuscript regression corpus
 
-[papers.csv](papers.csv) identifies 20 published or publicly posted manuscripts across six cohorts. The links pin an author repository commit or an arXiv source version. A venue label groups papers by publication family. Inspect the actual class and files in each pinned source before claiming template coverage. One manuscript has passed an original-source build. Nineteen await a baseline. The Week 8 editor round-trip evaluation has yet to begin.
+[papers.csv](papers.csv) identifies 20 published or publicly posted manuscripts across six cohorts. The links pin an author repository commit or an arXiv source version. A venue label groups papers by publication family. Inspect the actual class and files in each pinned source before claiming template coverage. One manuscript has passed an original-source build. Nineteen await a baseline. The offline editor regression below exercises that first paper. The full week-eight cohort and collaboration trials remain pending.
 
 ## Reproduce the first published-source check
 
@@ -23,6 +23,17 @@ node corpus/check.cjs corpus/local/emcee.zip
 The checker identifies document/ms.tex as the root and follows its local class. It reports one located reference, fourteen TeX-distribution lookups and four macro-generated graphics paths requiring a build. All four point to parameterised figure commands inside the class. There were zero missing literal references in this two-file input. [Pinned source](https://github.com/dfm/emcee/tree/3036b79448cc671d1a1a6c9104b6f0b7c4362850/document)
 
 On 23 November 2026, the isolated pdfLaTeX job produced a 275,608-byte PDF from that source. The TeX Live 2025 image digest was sha256:dbd65d778eb83de9b45fb0a8deb3afe44cbbaba2272e4e1e644e94dda52c7109. This establishes the baseline for a future import and re-export comparison. [Build record](https://github.com/zhongnz/PaperColab/actions/runs/45254301969/job/137971905975)
+
+## Run the editor round-trip
+
+On a test copy, append a marker sentence through the visual block model and export the ZIP. The check verifies the untouched ZIP byte for byte, the complete edited file outside the paragraph range, every raw block after re-import and the other archive members. Then compile the edited copy with the same root and TeX image.
+
+~~~sh
+node corpus/roundtrip.cjs corpus/local/emcee.zip document/ms.tex corpus/local/emcee-edited.zip
+python3 scripts/check_build.py --root document/ms.tex --pdf corpus/local/emcee-edited.pdf corpus/local/emcee-edited.zip
+~~~
+
+CI also edits the smaller Estuary manuscript through the real browser controls, downloads its ZIP, and checks the new heading and paragraph in the compiled PDF.
 
 ## Prepare the remaining sources
 
