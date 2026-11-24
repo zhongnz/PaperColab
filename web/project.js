@@ -6,7 +6,7 @@
   let token = sessionStorage.getItem('papercolab-token') || 'demo-ada';
   let me, projects = [], detail, fileText = '', selected, visual, source, draft = null, sourceDraft = '';
   let dirty = false, busy = false, polling = false, sourceDirty = false;
-  let viewMode='focused', cellViews=new Map(), multiDrafts=new Map();
+  let viewMode='focused', cellViews=new Map(), multiDrafts=new Map(), fileRevision=null;
   const B=PaperColabBlocks, E=PaperColabEditors;
   const isMulti=()=>viewMode!=='focused';
   let crdtModule=null;
@@ -246,6 +246,7 @@
     $('hosted-draft-count').textContent=isMulti() ? multiDrafts.size+' unsaved cell'+(multiDrafts.size===1?'':'s') : '';
     $('durable-drafts').disabled=busy||dirty;
     $('keep-drafts').disabled=!dirty||!$('durable-drafts').checked;
+    for(const button of $('hosted-cells').querySelectorAll('[data-structure]'))button.disabled=dirty;
     presenceChanged();
   }
 
@@ -417,7 +418,7 @@
 
   async function showFile(path) {
     const payload = await api('GET', '/api/projects/' + detail.id + '/file?path=' + encodeURIComponent(path));
-    fileText = payload.text;
+    fileText = payload.text;fileRevision=payload.revision;
     // Text and catalogue come from one server-side snapshot.
     detail.blocks=detail.blocks.filter(b=>b.path!==path).concat(payload.blocks);
     const host = $('blocks');
@@ -540,6 +541,30 @@
       if(fields) for(const input of fields.inputs) input.readOnly=true;
       apply.disabled=false;changed(area.value,'source','Apply or discard the LaTeX draft first.');
     });
+    if(viewMode==='cells'&&directAllowed()&&base.rich){
+      const add=(name,action,options={})=>{
+        const button=make(name,()=>{
+          if(dirty||busy||recovery)return;
+          const opts=typeof options==='function'?options():options;
+          if(['delete','merge-next','convert'].includes(action)&&!window.confirm(name+'? This changes the accepted manuscript.'))return;
+          act(()=>changeStructure(base,action,opts));
+        });
+        button.dataset.structure=action;button.onmousedown=event=>event.preventDefault();
+        button.disabled=dirty;
+      };
+      add('Add paragraph','insert',{kind:'paragraph'});
+      add('Add heading','insert',{kind:'heading'});
+      add('Add equation','insert',{kind:'equation'});
+      add('Add table','insert',{kind:'table'});
+      add('Add list','insert',{kind:'list'});
+      add('Move up','move-up');add('Move down','move-down');
+      if(base.kind==='paragraph'){
+        add('Split at caret','split',()=>({offset:editor?.state.selection.from-1}));
+        add('Merge next','merge-next');
+      }
+      add(base.kind==='heading'?'Make paragraph':'Make heading','convert');
+      add('Delete cell','delete');
+    }
     save.disabled=propose.disabled=discard.disabled=true;
     element.addEventListener('focusin',()=>{selected=base;presenceChanged();});
     return {element,destroy:()=>editor?.destroy()};
@@ -555,6 +580,15 @@
     for(const base of blocks) {
       const entry=mountHostedCell(base);cellViews.set(base.stableId,entry);host.append(entry.element);
     }
+  }
+  async function changeStructure(base,action,options){
+    if(!directAllowed()||dirty||recovery)throw Error('Save or close local drafts first.');
+    const result=await api('POST','/api/projects/'+detail.id+'/blocks/'+base.stableId+'/structure',
+      {revision:fileRevision,version:base.version,action,options});
+    selected=result.selectedId?{stableId:result.selectedId,path:base.path}:null;
+    await openProject(detail.id);
+    cellViews.get(result.selectedId)?.element.scrollIntoView({block:'nearest'});
+    say('Cell structure updated at revision '+result.revision+'.');
   }
   async function saveCell(base,after,mode){
     const endpoint='/api/projects/'+detail.id+'/blocks/'+base.stableId;

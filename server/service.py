@@ -631,8 +631,91 @@ class Service:
         self.db.execute("UPDATE suggestions SET status = ?, result = ?, decided_by = ?, decided_at = ? WHERE id = ?",
                         (status, result, decided_by, self.now(), suggestion_id))
 
+    def structural_edit(self, actor, project_id, stable_id, revision, version, action, options=None):
+        """Atomic structural edit against the exact displayed project revision."""
+        self.require(actor, project_id, "direct")
+        if actor["kind"] != "human":
+            raise ServiceError(403, "Structural edits require a human author.")
+        if (type(revision) is not int or type(version) is not int
+                or not isinstance(action, str) or action not in
+                {"insert", "delete", "move-up", "move-down", "split", "merge-next", "convert"}):
+            raise ServiceError(400, "Invalid structural request.")
+        options = {} if options is None else options
+        if not isinstance(options, dict):
+            raise ServiceError(400, "Invalid structural options.")
+        if action == "insert":
+            if set(options) != {"kind"} or options["kind"] not in ("paragraph", "heading", "equation", "table", "list"):
+                raise ServiceError(400, "Choose a supported cell type.")
+        elif action == "split":
+            if set(options) != {"offset"} or type(options["offset"]) is not int or options["offset"] < 1:
+                raise ServiceError(400, "Provide an interior paragraph caret offset.")
+        elif options:
+            raise ServiceError(400, "This operation takes no options.")
+        if self.manuscript_revision(actor, project_id)["revision"] != revision:
+            raise ServiceError(409, "Manuscript changed remotely. Refresh before changing cell structure.")
+        block = self._block_row(project_id, stable_id)
+        if block["version"] != version:
+            raise ServiceError(409, "Cell changed remotely. Refresh before changing cell structure.")
+        path = block["path"]
+        file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?",
+                                   (project_id, path)).fetchone()
+        previous = self._blocks(project_id, path)
+        result = self._node({"op": "structure", "text": file_row["current"], "previous": previous,
+                             "stableId": stable_id, "action": action, "options": options,
+                             "root": bool(file_row["is_root"])})
+        if not result.get("ok"):
+            raise ServiceError(409, result.get("error") or "This structural change needs review.")
+        old = {b["stableId"]: b for b in previous}
+        new = {b["stableId"]: b for b in result["blocks"]}
+        removed = set(old) - set(new)
+        added = set(new) - set(old)
+        changed = {key for key in old.keys() & new.keys()
+                   if (old[key]["quote"], old[key]["kind"]) != (new[key]["quote"], new[key]["kind"])}
+        if result["text"] == file_row["current"] or len(new) != len(result["blocks"]):
+            raise ServiceError(409, "No valid structural change.")
+        # Do not delete an owned cell or sever any anchor (including a
+        # dismissed historical anchor). Changes to anchored text may only
+        # proceed through the existing text-review workflow. Moves retain
+        # unchanged quotes and therefore retain exact anchor resolution.
+        for key in sorted(removed | changed):
+            if self.db.execute("SELECT 1 FROM anchors WHERE project_id=? AND block_id=?",
+                               (project_id, key)).fetchone():
+                raise ServiceError(409, "An affected cell has research anchors. Structural change needs explicit anchor migration.")
+            if key in removed and old[key]["owner_id"]:
+                raise ServiceError(409, "An affected cell has an owner. Reassign or clear ownership before removing it.")
+            if key in removed and self.db.execute(
+                    "SELECT 1 FROM suggestions WHERE project_id=? AND block_id=? AND status='pending'",
+                    (project_id, key)).fetchone():
+                raise ServiceError(409, "An affected cell has a pending proposal. Resolve it before removing the cell.")
+        with self.db:
+            self.db.execute("UPDATE files SET current=?, dirty=1 WHERE project_id=? AND path=?",
+                            (result["text"], project_id, path))
+            self._replace_blocks(project_id, path, result["blocks"])
+            if action == "split" and block["owner_id"]:
+                for key in added:
+                    self.db.execute("UPDATE blocks SET owner_id=? WHERE project_id=? AND stable_id=?",
+                                    (block["owner_id"], project_id, key))
+            for key in sorted(removed | changed):
+                self.db.execute("""UPDATE suggestions SET status='stale', result='stale'
+                                   WHERE project_id=? AND block_id=? AND status='pending'""", (project_id, key))
+                self.db.execute("DELETE FROM crdt_cells WHERE project_id=? AND block_id=?", (project_id, key))
+            next_revision = self._touch(project_id)
+            # Keep source and identity evidence for affected cells; unchanged
+            # cells' history, versions, anchors and replicas are untouched.
+            self._audit(actor["id"], "structure", project_id,
+                        {"action": action, "block": stable_id, "path": path, "revision": next_revision,
+                         "base_revision": revision, "options": options,
+                         "before_order": [b["stableId"] for b in previous],
+                         "after_order": [b["stableId"] for b in result["blocks"]],
+                         "before": [old[k] for k in sorted(removed | changed)],
+                         "after": [new[k] for k in sorted(added | changed)]})
+        return {"revision": next_revision, "selectedId": result["selectedId"],
+                "added": sorted(added), "removed": sorted(removed), "changed": sorted(changed)}
+
     def move_block(self, actor, project_id, stable_id, to_offset):
-        self.require(actor, project_id, "propose")
+        # Legacy offset interface retained for compatibility, but never allow
+        # an assistant to mutate authoritative source outside review.
+        self.require(actor, project_id, "direct")
         block = self._block_row(project_id, stable_id)
         file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?", (project_id, block["path"])).fetchone()
         previous = self._blocks(project_id, block["path"])

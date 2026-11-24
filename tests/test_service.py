@@ -206,6 +206,72 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(now["version"], block["version"] + 2)
         self.assertEqual(now["owner_id"], a["bao"]["id"])
 
+    def test_structural_transactions_preserve_identity_and_governance(self):
+        s,p,a=self.service,self.project,self.actors
+        base=paragraph(s,a["bao"],p)
+        path=base["path"]
+        original=s.file_text(a["ada"],p,path)["text"]
+        original_blocks=s._blocks(p,path)
+        heading=next(b for b in original_blocks if b["kind"]=="heading")
+        raw=next(b for b in original_blocks if b["kind"]=="raw")
+        s.assign_owner(a["ada"],p,base["stableId"],a["bao"]["id"])
+        def current(key):
+            return next(b for b in s._blocks(p,path) if b["stableId"]==key)
+        def run(key,action,options=None,actor="bao"):
+            b=current(key)
+            return s.structural_edit(a[actor],p,key,s.manuscript_revision(a["ada"],p)["revision"],
+                                     b["version"],action,options)
+        def denied(key,action,options=None,actor="bao",status=409):
+            before=s.file_text(a["ada"],p,path)
+            with self.assertRaises(ServiceError) as error:
+                run(key,action,options,actor)
+            self.assertEqual(error.exception.status,status)
+            self.assertEqual(s.file_text(a["ada"],p,path),before)
+        anchor=s.create_anchor(a["iris"],p,heading["stableId"])
+        released=s.release(a["ada"],p)
+        rev=s.manuscript_revision(a["ada"],p)["revision"]
+        denied(base["stableId"],"insert",{"kind":"paragraph"},actor="quill",status=403)
+        denied(base["stableId"],"insert",{"kind":"paragraph"},actor="iris",status=403)
+        with self.assertRaises(ServiceError) as error:
+            s.move_block(a["quill"],p,base["stableId"],0)
+        self.assertEqual(error.exception.status,403)
+        added=run(base["stableId"],"insert",{"kind":"paragraph"})["selectedId"]
+        self.assertNotIn(added,[b["stableId"] for b in original_blocks])
+        self.assertEqual(current(added)["quote"],"New paragraph.")
+        self.assertEqual(current(raw["stableId"])["quote"],raw["quote"])
+        self.assertEqual(current(base["stableId"])["owner_id"],a["bao"]["id"])
+        with self.assertRaises(ServiceError) as error:
+            s.structural_edit(a["bao"],p,base["stableId"],rev,base["version"],"insert",{"kind":"heading"})
+        self.assertEqual(error.exception.status,409)
+        run(added,"move-up")
+        self.assertEqual(current(added)["version"],1)
+        run(added,"move-down")
+        run(added,"convert")
+        self.assertEqual(current(added)["kind"],"heading")
+        self.assertEqual(current(added)["version"],2)
+        run(added,"convert")
+        run(added,"delete")
+        self.assertNotIn(added,[b["stableId"] for b in s._blocks(p,path)])
+        denied(heading["stableId"],"delete")
+        denied(base["stableId"],"delete")
+        denied(raw["stableId"],"delete")
+        # Moving an anchored cell preserves the same identity and quote.
+        run(heading["stableId"],"move-down")
+        self.assertEqual(next(x for x in s.project(a["ada"],p)["anchors"] if x["id"]==anchor["id"])["status"],"exact")
+        run(heading["stableId"],"move-up")
+        proposal=s.propose(a["quill"],p,base["stableId"],s.manuscript_revision(a["ada"],p)["revision"],
+                           current(base["stableId"])["quote"],current(base["stableId"])["quote"]+" Extra.","source")
+        split=run(base["stableId"],"split",{"offset":15})["selectedId"]
+        self.assertEqual(current(split)["owner_id"],a["bao"]["id"])
+        self.assertEqual(next(x for x in s.project(a["ada"],p)["suggestions"] if x["id"]==proposal["id"])["status"],"stale")
+        denied(base["stableId"],"merge-next")
+        s.assign_owner(a["ada"],p,split,None)
+        run(base["stableId"],"merge-next")
+        self.assertEqual(current(base["stableId"])["owner_id"],a["bao"]["id"])
+        self.assertEqual(current(raw["stableId"])["quote"],raw["quote"])
+        self.assertEqual(text_of(s.release_zip(a["ada"],p,released["id"])[0],path),original)
+        self.assertTrue(any(x["action"]=="structure" for x in s.audit(a["ada"],p)))
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")

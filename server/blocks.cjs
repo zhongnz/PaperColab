@@ -48,6 +48,29 @@ function run(body) {
       return {ok:true,text:next,blocks};
     } catch(error) {return {ok:false,error:error.message};}
   }
+  if (body.op === 'structure') {
+    const B=PaperColabBlocks,file=parse(body.text,body.root);
+    try {
+      if(file.blocks.length!==body.previous.length)throw Error('Cell catalogue no longer matches source.');
+      const ids=new Map();
+      for(let i=0;i<file.blocks.length;i++){
+        const b=file.blocks[i],old=body.previous[i];
+        if(b.kind!==old.kind||b.from!==old.from||b.to!==old.to||B.current(file,b)!==old.quote)
+          throw Error('Cell catalogue no longer matches source.');
+        ids.set(b.id,old.stableId);
+      }
+      const target=file.blocks.find(b=>ids.get(b.id)===body.stableId);
+      if(!target)throw Error('Unknown cell.');
+      const result=B.structural(file,target.id,body.action,{...body.options,root:Boolean(body.root)});
+      const blocks=result.file.blocks.map(b=>{
+        const stableId=ids.get(b.id)??crypto.randomUUID();
+        ids.set(b.id,stableId);
+        return {stableId,kind:b.kind,from:b.from,to:b.to,quote:B.current(result.file,b),
+          label:b.label||'',rich:Boolean(b.rich),fallback:b.fallback||'',commands:b.commands||[]};
+      });
+      return {ok:true,text:B.exportText(result.file),blocks,selectedId:ids.get(result.selectedId)??null};
+    }catch(error){return {ok:false,error:error.message};}
+  }
   if (body.op === 'move') return I.moveBlock(body.text, body.previous, body.stableId, body.toOffset, body.root);
   if (body.op === 'resolve') return I.resolveAnchor(body.blocks, body.anchor);
   throw new Error('Unknown block operation.');

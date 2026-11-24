@@ -99,3 +99,23 @@ PaperColab code and its fictional example use the [Apache License 2.0](LICENSE).
 The hosted workspace supports explicit direct cell saves for human authors and leads, alongside the existing reviewed suggestion mode. Each persistent block has a content version and retains its owner when reparsed. Direct saves require the expected cell version and quote, validate exact retained source ranges, record an audit entry and invalidate overlapping pending suggestions. Independent cell edits can succeed even after another project revision advances. An idle open manuscript checks the server revision every 2.5 seconds; a dirty draft stays local and can be saved only if its version still matches. Unrelated workspace actions that refresh the manuscript are blocked while a local draft is open; navigation requires explicit discard confirmation. This is optimistic server-authoritative collaboration, not a CRDT, character-level co-editing, presence, or a hosted port of the complete offline cell UI. Direct scientific edits are source-only for supported adapters. The existing suggestion and movement paths have separate validation contracts; owner metadata is not access control. The service is still a local SQLite prototype, not production authentication or deployment infrastructure.
 
 The hosted manuscript now offers Focused, Document and Cells views. The latter two mount independently editable cells with shared Tiptap and scientific field controls (also used offline), local LaTeX drafts and per-cell save/propose/discard. A successful save preserves other cell drafts, including their original versions, and stale saves retain the conflicting draft. The file API returns source and its cell catalogue in a single snapshot. Hosted scientific forms use the human direct-save path; AI scientific proposals, hosted structural editing, asset previews and full offline/hosted component parity are not yet available. View/file changes explicitly discard local drafts; drafts are in memory, not durable across reload. No CRDT has been introduced.
+
+### Hosted structural editing
+
+In hosted Cells view, human authors and leads can insert supported paragraph,
+heading, equation, table and list templates, delete editable cells, move across
+adjacent editable cells, split paragraphs at the caret, merge adjacent
+paragraphs and convert headings/paragraphs. The server validates the exact
+project revision and cell version, reuses the offline source-boundary validator,
+assigns new UUIDs only to new cells and commits the source, catalogue and audit
+atomically. Unchanged cells retain their versions and owners. Split children
+inherit ownership; removed owned cells require explicit unassignment. Any
+anchor on changed or removed content blocks the operation, even dismissed
+anchors; unchanged moves preserve exact anchors. Removing a cell with pending
+proposals is blocked; proposals against changed retained cells become stale.
+Changed/deleted CRDT checkpoints are invalidated. Local drafts must be saved
+or closed first. No collaborative structural undo, arbitrary raw-cell moves,
+anchor migration, cross-file moves or automatic structural conflict merging.
+The older offset-based move endpoint remains for compatibility but is now
+human-only; it has a different validation contract and is not used by the new
+UI. Structural changes do not alter existing release snapshots.
