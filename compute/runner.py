@@ -53,21 +53,25 @@ def execute(bundle, timeout=60):
         start=time.monotonic()
         process=subprocess.Popen(command(name,directory,spec),stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-        limit=Event(); log=bytearray()
+        limit=Event(); log=bytearray(); read_error=Event()
         def drain():
-            while True:
-                chunk=process.stdout.read1(8192)
-                if not chunk:break
-                remaining=MAX_LOG-len(log)
-                log.extend(chunk[:remaining])
-                if len(chunk)>remaining:
-                    limit.set()
-                    break
+            try:
+                while True:
+                    chunk=process.stdout.read1(8192)
+                    if not chunk:break
+                    remaining=MAX_LOG-len(log)
+                    log.extend(chunk[:remaining])
+                    if len(chunk)>remaining:
+                        limit.set()
+                        break
+            except OSError:
+                read_error.set()
         reader=Thread(target=drain,daemon=True);reader.start()
         status=None
         try:
             while process.poll() is None:
                 if limit.is_set():status="output-limit";break
+                if read_error.is_set():status="failed";break
                 if time.monotonic()-start>timeout:status="timeout";break
                 time.sleep(0.05)
         finally:
@@ -78,8 +82,11 @@ def execute(bundle, timeout=60):
                     if process.poll() is None:process.kill()
             process.wait(timeout=10)
             reader.join(timeout=5)
+            if reader.is_alive():
+                raise ValueError("Log collection did not finish; no receipt issued.")
             process.stdout.close()
         if limit.is_set():status="output-limit"
+        elif read_error.is_set():status="failed"
         code=process.returncode
         if status:code=124 if status=="timeout" else 125
         else:status="succeeded" if code==0 else "failed"

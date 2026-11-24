@@ -212,10 +212,11 @@ def exercise(browser, port, width):
             if dependency:
                 page.locator("#workflow-dependencies").select_option(dependency)
             page.get_by_role("button",name="Add workflow step",exact=True).click()
-            step=page.locator(".workflow-step").filter(has_text=title)
+            step=page.locator(".workflow-step").filter(has=page.locator("strong").filter(has_text=re.compile(r"^\d+\. "+re.escape(title)+r" · ")))
             expect(step).to_have_count(1)
+            step_id=step.get_attribute("data-step-id")
             expect(page.get_by_role("button",name="Add workflow step",exact=True)).to_be_enabled()
-            return step
+            return page.locator(f'.workflow-step[data-step-id="{step_id}"]')
         first=add_step("Check sampling")
         second=add_step("Refine sampling",first.get_attribute("data-step-id"))
         expect(first).to_have_attribute("data-status","ready")
@@ -247,6 +248,53 @@ def exercise(browser, port, width):
         expect(first).to_have_attribute("data-status","completed")
         expect(second).to_have_attribute("data-status","ready")
         expect(page.locator("#workflow-list")).to_contain_text("1/2 evaluated")
+        expect(page.locator("#create-experiment")).to_be_enabled()
+        # Real browser registry/receipt round trip; synthetic receipt is
+        # intentionally distinct from the actual container CI workflow.
+        import hashlib
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        for kind,title,body in [("code","Fixture computation","print(42)"),("dataset","Fixture inputs","1,2,3")]:
+            page.locator("#object-kind").select_option(kind)
+            page.locator("#object-title").fill(title)
+            page.locator("#object-id").fill("")
+            page.locator("#object-body").fill(body)
+            page.get_by_role("button",name="Add object",exact=True).click()
+            expect(page.locator("#library")).to_contain_text(title)
+            expect(page.locator("#create-experiment")).to_be_enabled()
+        page.locator("#experiment-title").fill("Fixture experiment")
+        page.locator("#experiment-objective").fill("Review the computation receipt.")
+        page.locator("#experiment-language").select_option("python")
+        image="sha256:"+"a"*64
+        page.locator("#experiment-image").fill(image)
+        page.locator("#experiment-code").select_option(label="Fixture computation · v1")
+        page.locator("#experiment-datasets").select_option(label="Fixture inputs · v1")
+        page.get_by_role("button",name="Register experiment").click()
+        run=page.locator(".experiment-record").filter(has_text="Fixture experiment")
+        expect(run).to_contain_text("planned")
+        with TemporaryDirectory() as directory:
+            with page.expect_download() as download:
+                run.get_by_role("button",name="Download experiment bundle").click()
+            path=Path(directory)/"bundle.json"
+            download.value.save_as(path)
+            bundle=json.loads(path.read_text())
+            assert bundle["spec"]["code"]["body"]=="print(42)"
+            assert bundle["spec"]["datasets"][0]["body"]=="1,2,3"
+            log="42\n"
+            receipt={"format":"papercolab-receipt-v1","experiment_id":bundle["spec"]["id"],
+                     "bundle_sha256":bundle["sha256"],"image":image,"runner":"docker-local-v1",
+                     "status":"succeeded","exit_code":0,"elapsed_ms":10,
+                     "log":log,"log_sha256":hashlib.sha256(log.encode()).hexdigest()}
+            path=Path(directory)/"receipt.json"
+            path.write_text(json.dumps(receipt))
+            run.get_by_label("Runner receipt for Fixture experiment").set_input_files(path)
+            run.get_by_role("button",name="Import runner receipt").click()
+            expect(run).to_contain_text("review")
+            run.get_by_role("textbox",name="Experiment assessment for Fixture experiment").fill("Synthetic fixture receipt reviewed.")
+            run.get_by_role("button",name="Accept as run evidence").click()
+            expect(run).to_contain_text("accepted")
+            expect(page.locator("#library")).to_contain_text("run · Fixture experiment")
     page.close()
     assert not errors, errors
 

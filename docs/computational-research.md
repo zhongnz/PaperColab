@@ -52,3 +52,5 @@ after the bounded script-run contract passes. CI runs Python and R images
 separately, with actual image IDs resolved after pulling test tags; tags are
 not immutable dependency pins for CI itself. Server contract tests use
 synthetic receipts; the runner CI uses real containers.
+
+The hosted browser test uses a clearly labelled synthetic receipt to verify bundle download, receipt import and reviewed evidence registration without starting containers in the web service.
