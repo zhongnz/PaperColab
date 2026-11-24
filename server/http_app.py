@@ -25,6 +25,19 @@ class Api:
         if path == "/api/health" and method == "GET":
             return 200, {"ok": True}
         try:
+            bits = [part for part in path.split("/") if part]
+            # A task capability is deliberately NOT an ordinary actor token.
+            # The only routes that accept it are these two exact endpoints.
+            if len(bits) == 4 and bits[:2] == ["api", "delegated"]:
+                if bits[3] == "context" and method == "GET":
+                    return 200, self.service.delegated_context(bits[2], token)
+                if bits[3] == "proposal" and method == "POST":
+                    data = json.loads(body.decode() or "{}")
+                    if not isinstance(data, dict) or set(data) != {"after", "rationale", "evidence_ids"}:
+                        from server.service import ServiceError
+                        raise ServiceError(400, "Only after, rationale and evidence_ids are allowed.")
+                    return 200, self.service.delegated_proposal(bits[2], token, data["after"], data["rationale"], data["evidence_ids"])
+                raise self._missing()
             if path.startswith("/api/"):
                 actor = self.service.actor_by_token(token)
                 return 200, self.route(method, path, query, headers, body, actor)
@@ -73,6 +86,11 @@ class Api:
             return self.service.file_text(actor, bits[2], query["path"])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "export" and method == "GET":
             return {"zip_b64": __import__("base64").b64encode(self.service.export_zip(actor, bits[2])).decode()}
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "agent-tasks" and method == "POST":
+            return self.service.create_agent_task(actor, bits[2], data.get("block_id"), data.get("assignee_id"),
+                                                  data.get("instructions"), data.get("context_ids", []))
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "agent-tasks" and bits[5] == "cancel" and method == "POST":
+            return self.service.cancel_agent_task(actor, bits[2], bits[4])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "suggestions" and method == "POST":
             return self.service.propose(actor, bits[2], data["block_id"], data["base_revision"], data["before"], data["after"], data["mode"], data.get("evidence_ids"))
         if len(bits) == 6 and bits[3] == "suggestions" and bits[5] == "accept" and method == "POST":

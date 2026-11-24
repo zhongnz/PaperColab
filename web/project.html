@@ -133,6 +133,29 @@
           </div>
         </div>
       </section>
+      <section class="panel" id="agent-tasks" hidden>
+        <h2>AI task delegation</h2>
+        <p class="muted">Assign one editable cell and explicitly selected research context. Restricted credentials permit one proposal, never direct manuscript edits. No model is called automatically.</p>
+        <div id="delegate-form" hidden>
+          <label for="delegate-cell">Target cell</label>
+          <select id="delegate-cell" style="max-width:100%"></select>
+          <label for="delegate-assistant">Assistant</label>
+          <select id="delegate-assistant"></select>
+          <label for="delegate-context">Research context (optional, select up to 12)</label>
+          <select id="delegate-context" multiple size="5" style="width:100%"></select>
+          <label for="delegate-instructions">Task instructions</label>
+          <textarea id="delegate-instructions" rows="3" maxlength="4000" style="width:100%"></textarea>
+          <button type="button" id="create-agent-task" class="primary">Create delegated task</button>
+          <div id="delegated-credential" hidden>
+            <p>Task ID: <code id="delegated-task-id"></code></p>
+            <label for="delegated-token">One-time displayed task credential (expires in 24 hours)</label>
+            <input id="delegated-token" readonly type="text" autocomplete="off" style="width:100%">
+            <p class="muted">Share only with your chosen local agent. Do not include in a paper, repository or chat transcript.</p>
+            <button type="button" id="hide-delegated-token">Hide credential</button>
+          </div>
+        </div>
+        <div id="agent-task-list" class="stack"></div>
+      </section>
       <section class="panel">
         <h2>Review</h2>
         <p class="muted">Visual and source edits wait as the same kind of suggestion. Accepting one leaves an overlapping edit stale instead of merging it.</p>

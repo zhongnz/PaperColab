@@ -272,6 +272,89 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(text_of(s.release_zip(a["ada"],p,released["id"])[0],path),original)
         self.assertTrue(any(x["action"]=="structure" for x in s.audit(a["ada"],p)))
 
+    def test_delegated_task_capability_and_review(self):
+        s,p,a=self.service,self.project,self.actors
+        api=Api(s)
+        block=paragraph(s,a["bao"],p)
+        evidence=s.add_object(a["ada"],p,"note","Allowed context","Evidence for three readings.")
+        private=s.add_object(a["ada"],p,"note","Unassigned context","Not in the task.")
+        original=s.file_text(a["ada"],p,block["path"])
+        def request(method,path,token,data=None):
+            return api.handle(method,path,{"authorization":"Bearer "+token,"content-type":"application/json"},
+                              b"" if data is None else json.dumps(data).encode())
+        task_route="/api/projects/"+p+"/agent-tasks"
+        payload={"block_id":block["stableId"],"assignee_id":a["quill"]["id"],
+                 "instructions":"Revise the sample description using the supplied context.","context_ids":[evidence["id"]]}
+        self.assertEqual(request("POST",task_route,"demo-bao",payload)[0],403)
+        code,created=request("POST",task_route,"demo-ada",payload)
+        self.assertEqual(code,200,created)
+        secret=created["token"]; task=created["task"]; endpoint="/api/delegated/"+task["id"]
+        self.assertNotIn(secret,json.dumps(s.project(a["ada"],p)))
+        self.assertNotIn(secret,json.dumps(s.audit(a["ada"],p)))
+        self.assertNotEqual(s._task_row(task["id"])["token_hash"],secret)
+        self.assertEqual(request("GET","/api/projects",secret)[0],401)
+        self.assertEqual(request("GET","/api/projects/"+p,secret)[0],401)
+        self.assertEqual(request("GET",endpoint+"/context","demo-quill")[0],401)
+        code,context=request("GET",endpoint+"/context",secret)
+        self.assertEqual(code,200,context)
+        self.assertEqual(context["cell"]["id"],block["stableId"])
+        self.assertEqual([o["id"] for o in context["context"]],[evidence["id"]])
+        self.assertNotIn(private["body"],json.dumps(context))
+        proposal={"after":block["quote"].replace("two readings","three readings"),
+                  "rationale":"Align the manuscript with the assigned note.","evidence_ids":[evidence["id"]]}
+        self.assertEqual(request("POST",endpoint+"/proposal",secret,{**proposal,"block_id":"other"})[0],400)
+        self.assertEqual(request("POST",endpoint+"/proposal",secret,{**proposal,"evidence_ids":[private["id"]]})[0],403)
+        self.assertEqual(request("POST",endpoint+"/proposal",secret,{**proposal,"after":proposal["after"]+"\n\nExtra."})[0],409)
+        code,result=request("POST",endpoint+"/proposal",secret,proposal)
+        self.assertEqual(code,200,result)
+        suggestion=result["suggestion"]
+        self.assertEqual(suggestion["status"],"pending")
+        self.assertEqual(suggestion["actor_id"],a["quill"]["id"])
+        self.assertEqual(s.file_text(a["ada"],p,block["path"]),original)
+        self.assertEqual(request("POST",endpoint+"/proposal",secret,proposal)[0],409)
+        self.assertEqual(request("GET",endpoint+"/context",secret)[0],409)
+        self.assertEqual(request("POST","/api/projects/"+p+"/suggestions/"+suggestion["id"]+"/accept",secret,{})[0],401)
+        s.accept(a["iris"],p,suggestion["id"])
+        self.assertIn("three readings",s.file_text(a["ada"],p,block["path"])["text"])
+        self.assertEqual(s._task_view(s._task_row(task["id"]))["status"],"accepted")
+
+    def test_delegated_task_context_changes_expiry_and_revocation(self):
+        s,p,a=self.service,self.project,self.actors
+        block=paragraph(s,a["bao"],p)
+        evidence=s.add_object(a["ada"],p,"note","Context","Original")
+        def create():
+            return s.create_agent_task(a["ada"],p,block["stableId"],a["quill"]["id"],"Revise the cell",[evidence["id"]])
+        def submit(created):
+            return s.delegated_proposal(created["task"]["id"],created["token"],
+                block["quote"].replace("two readings","three readings"),"Reason",[evidence["id"]])
+        first=create()
+        submitted=submit(first)["suggestion"]
+        s.update_object(a["ada"],p,evidence["id"],"Changed context")
+        with self.assertRaises(ServiceError) as err:
+            s.accept(a["iris"],p,submitted["id"])
+        self.assertEqual(err.exception.status,409)
+        self.assertEqual(s._suggestion(submitted["id"])["status"],"stale")
+        second=create()
+        s.cancel_agent_task(a["ada"],p,second["task"]["id"])
+        with self.assertRaises(ServiceError):
+            s.delegated_context(second["task"]["id"],second["token"])
+        third=create()
+        s.clock=lambda:third["task"]["expires_at"]+1
+        with self.assertRaises(ServiceError) as err:
+            submit(third)
+        self.assertEqual(err.exception.status,409)
+        fourth=create()
+        s.set_policy(a["ada"],False,0)
+        with self.assertRaises(ServiceError) as err:
+            s.delegated_context(fourth["task"]["id"],fourth["token"])
+        self.assertEqual(err.exception.status,403)
+        s.set_policy(a["ada"],True,0)
+        s.remove_member(a["ada"],p,a["quill"]["id"])
+        with self.assertRaises(ServiceError) as err:
+            submit(fourth)
+        self.assertEqual(err.exception.status,403)
+        self.assertEqual(paragraph(s,a["bao"],p)["quote"],block["quote"])
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")

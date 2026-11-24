@@ -119,3 +119,7 @@ anchor migration, cross-file moves or automatic structural conflict merging.
 The older offset-based move endpoint remains for compatibility but is now
 human-only; it has a different validation contract and is not used by the new
 UI. Structural changes do not alter existing release snapshots.
+
+### AI task delegation
+
+The hosted workspace now has a lead-only delegation form and a restricted, expiring, single-cell proposal API. See [agent delegation](docs/agent-delegation.md) for the authority boundary, pinned research context, review contract and limitations. No model is invoked automatically.

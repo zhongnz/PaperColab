@@ -330,6 +330,7 @@
     for (const file of files) select.append(new Option(file.path, file.path));
     select.value = files.some(file => file.path === previous) ? previous : (files.find(file => /methods/.test(file.path)) || files[0])?.path || '';
     renderQueue();
+    renderAgentTasks();
     renderLibrary();
     renderDecisions();
     renderReleases();
@@ -338,6 +339,55 @@
     liveControl();presenceChanged();
   }
 
+  function renderAgentTasks(){
+    const form=$('delegate-form'),host=$('agent-task-list');
+    $('delegated-credential').hidden=true;$('delegated-token').value='';
+    $('agent-tasks').hidden=me.kind!=='human';
+    form.hidden=me.kind!=='human'||role()!=='lead';
+    host.replaceChildren();
+    const cell=$('delegate-cell'),assistant=$('delegate-assistant'),context=$('delegate-context');
+    const priorCell=cell.value,priorAssistant=assistant.value,priorContext=[...context.selectedOptions].map(x=>x.value);
+    cell.replaceChildren();assistant.replaceChildren();context.replaceChildren();
+    for(const b of detail.blocks.filter(b=>b.rich))cell.append(new Option(b.path+' · '+b.quote.replace(/\s+/g,' ').slice(0,80),b.stableId));
+    for(const m of detail.members.filter(m=>m.kind==='assistant'&&['author','lead'].includes(m.role)))assistant.append(new Option(m.name,m.id));
+    for(const obj of detail.objects)context.append(new Option(obj.kind+' · '+obj.title+' · v'+obj.revision,obj.id));
+    if([...cell.options].some(x=>x.value===priorCell))cell.value=priorCell;
+    if([...assistant.options].some(x=>x.value===priorAssistant))assistant.value=priorAssistant;
+    for(const option of context.options)option.selected=priorContext.includes(option.value);
+    $('create-agent-task').disabled=!cell.options.length||!assistant.options.length;
+    for(const task of detail.agent_tasks??[]){
+      const row=document.createElement('article'),heading=document.createElement('strong'),info=document.createElement('p');
+      const assignee=detail.members.find(m=>m.id===task.assignee_id)?.name??'Former assistant';
+      heading.textContent=assignee+' · '+task.status;
+      info.textContent=task.instructions+' · '+task.context_refs.length+' context objects · base cell v'+task.cell_version;
+      row.append(heading,info);
+      if(task.rationale){const reason=document.createElement('p');reason.textContent='Proposal rationale: '+task.rationale;row.append(reason);}
+      if(role()==='lead'&&['open','expired','pending'].includes(task.status)){
+        const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel delegated task';
+        cancel.onclick=()=>act(async()=>{
+          if(!window.confirm('Cancel this task and reject its pending proposal, if any?'))return;
+          await api('POST','/api/projects/'+detail.id+'/agent-tasks/'+task.id+'/cancel');
+          await openProject(detail.id);say('Delegated task cancelled.');
+        });
+        row.append(cancel);
+      }
+      host.append(row);
+    }
+    if(!host.children.length)host.textContent='No delegated tasks yet.';
+  }
+  $('create-agent-task').onclick=()=>act(async()=>{
+    const instructions=$('delegate-instructions').value;
+    const result=await api('POST','/api/projects/'+detail.id+'/agent-tasks',{
+      block_id:$('delegate-cell').value,assignee_id:$('delegate-assistant').value,
+      instructions,context_ids:[...$('delegate-context').selectedOptions].map(x=>x.value)
+    });
+    await openProject(detail.id);
+    $('delegate-instructions').value='';
+    $('delegated-task-id').textContent=result.task.id;
+    $('delegated-token').value=result.token;$('delegated-credential').hidden=false;
+    say('Delegated task created. Copy its restricted credential now; it is not shown again.');
+  });
+  $('hide-delegated-token').onclick=()=>{$('delegated-token').value='';$('delegated-credential').hidden=true;};
   function renderQueue() {
     const queue = $('queue');
     queue.replaceChildren();
@@ -351,6 +401,14 @@
       change.className = 'muted';
       change.textContent = item.after.slice(0, 180);
       row.append(title, change);
+      const task=(detail.agent_tasks??[]).find(t=>t.suggestion_id===item.id);
+      if(task){
+        const reason=document.createElement('p');reason.textContent='Delegated task · '+task.rationale+' · '+task.context_refs.length+' pinned context objects';
+        const before=document.createElement('pre'),after=document.createElement('pre');
+        before.style.whiteSpace=after.style.whiteSpace='pre-wrap';
+        before.textContent='Original source:\n'+item.before;after.textContent='Proposed source:\n'+item.after;
+        row.append(reason,before,after);
+      }
       if (item.status === 'pending' && canDecide() && me.kind === 'human') {
         const accept = document.createElement('button');
         accept.type = 'button'; accept.className = 'primary'; accept.textContent = 'Accept';
@@ -759,6 +817,7 @@
       const previous=detail?.id;
       stopLive();$('live-enabled').checked=false;
       closeRecovery();$('durable-drafts').checked=false;storageMessage('');storageFailed=false;
+      $('delegated-token').value='';$('delegated-credential').hidden=true;$('delegate-instructions').value='';
       destroyEditors(); detail=null; selected=null; fileText='';
       $('crdt-enabled').checked=false;updateTransportControl();
       $('open').hidden=true;
