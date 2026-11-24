@@ -433,7 +433,9 @@ class Service:
         row = self.db.execute("SELECT current, is_text FROM files WHERE project_id = ? AND path = ?", (project_id, path)).fetchone()
         if not row or not row["is_text"]:
             raise ServiceError(404, "That file is not editable text.")
+        contexts=self._node({"op":"context","project":self._macro_project(project_id)})
         return {"path": path, "text": row["current"], "blocks": self._blocks(project_id, path),
+                "macro_context":contexts.get(path),
                 "revision": self.manuscript_revision(actor, project_id)["revision"]}
 
     def import_example(self, actor, project_id):
@@ -468,6 +470,12 @@ class Service:
         with self.db:
             for path, data in files:
                 self._store_file(actor, project_id, path, data)
+            contexts=self._node({"op":"context","project":self._macro_project(project_id)})
+            for row in self._rows("SELECT path,current,is_root FROM files WHERE project_id=? AND is_text=1",(project_id,)):
+                if Path(row["path"]).suffix.lower() in {".tex",".ltx"}:
+                    listed=self._node({"op":"catalogue","text":row["current"],"root":bool(row["is_root"]),
+                                       "previous":[],"macros":contexts.get(row["path"])})
+                    self._replace_blocks(project_id,row["path"],listed["blocks"])
             self._touch(project_id)
             self._audit(actor["id"], "import", project_id, {"files": len(files)})
         return self.project(actor, project_id)
@@ -484,13 +492,25 @@ class Service:
         is_root = bool(is_text and ("\\documentclass" in text or "\\begin{document}" in text))
         self.db.execute("""INSERT INTO files (project_id, path, original, current, is_text, is_root, dirty)
                            VALUES (?, ?, ?, ?, ?, ?, 0)""", (project_id, path, data, text, int(is_text), int(is_root)))
-        if is_text and suffix in {".tex", ".ltx"}:
-            listed = self._node({"op": "catalogue", "text": text, "root": is_root, "previous": []})
-            self._replace_blocks(project_id, path, listed["blocks"])
         if is_text and suffix == ".bib":
             for entry in bib_entries(text):
                 self._add_object(actor, project_id, "source", entry["title"], entry["raw"], actor["id"],
                                  {"system": "bibtex", "identifier": entry["key"], "version": "1", "access": "project", "holding": "copy"})
+
+    def _macro_project(self, project_id):
+        # Bound the extra parse workload; larger projects retain local
+        # parsing. All sources are taken from the same locked DB snapshot.
+        rows=self._rows("""SELECT path,current,is_root FROM files WHERE project_id=? AND is_text=1
+                           AND (lower(path) LIKE '%.tex' OR lower(path) LIKE '%.ltx'
+                                OR lower(path) LIKE '%.sty' OR lower(path) LIKE '%.cls')
+                           ORDER BY path LIMIT 129""",(project_id,))
+        if len(rows)>128 or sum(len(r["current"]) for r in rows)>2*1024*1024:
+            return {"entries":[],"roots":[]}
+        return {"entries":[[r["path"],r["current"]] for r in rows],
+                "roots":[r["path"] for r in rows if r["is_root"] and Path(r["path"]).suffix.lower() in {".tex",".ltx"}]}
+
+    def _node_file(self, project_id, path, payload):
+        return self._node({**payload,"path":path,"project":self._macro_project(project_id)})
 
     def _node(self, payload):
         proc = subprocess.run(["node", str(NODE)], input=json.dumps(payload), text=True, capture_output=True, check=False, cwd=ROOT)
@@ -548,7 +568,7 @@ class Service:
         if not row or not row["is_text"]:
             raise ServiceError(404,"Unknown text manuscript.")
         previous=self._blocks(project_id,path)
-        result=self._node({"op":"catalogue","text":row["current"],"root":bool(row["is_root"]),"previous":[]})
+        result=self._node_file(project_id,path,{"op":"catalogue","text":row["current"],"root":bool(row["is_root"]),"previous":[]})
         if not result.get("ok"):
             raise ServiceError(409,"The current parser could not catalogue this file.")
         revision=self.manuscript_revision(actor,project_id)["revision"]
@@ -700,7 +720,7 @@ class Service:
         file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?",
                                    (project_id, block["path"])).fetchone()
         previous = self._blocks(project_id, block["path"])
-        result = self._node({"op": "direct", "text": file_row["current"], "previous": previous,
+        result = self._node_file(project_id,block["path"],{"op": "direct", "text": file_row["current"], "previous": previous,
                              "stableId": stable_id, "after": after, "mode": mode, "root": bool(file_row["is_root"])})
         if not result.get("ok"):
             raise ServiceError(409, result.get("error") or "This edit changes an unsupported boundary.")
@@ -1155,7 +1175,7 @@ class Service:
         project_id = row["project_id"]
         file_row = self.db.execute("SELECT current,is_root FROM files WHERE project_id=? AND path=?",
                                    (project_id, block["path"])).fetchone()
-        result = self._node({"op": "direct", "text": file_row["current"], "previous": self._blocks(project_id, block["path"]),
+        result = self._node_file(project_id,block["path"],{"op": "direct", "text": file_row["current"], "previous": self._blocks(project_id, block["path"]),
                              "stableId": row["block_id"], "after": after, "mode": "source", "root": bool(file_row["is_root"])})
         if not result.get("ok"):
             raise ServiceError(409, result.get("error") or "Proposal changes an unsupported source boundary.")
@@ -1258,7 +1278,7 @@ class Service:
             raise ServiceError(409, "Another change reached this block first. The suggestion is stale and was not merged.")
         file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?", (project_id, block["path"])).fetchone()
         previous = self._blocks(project_id, block["path"])
-        result = self._node({"op": "direct" if task else "apply", "text": file_row["current"], "previous": previous, "stableId": suggestion["block_id"],
+        result = self._node_file(project_id,block["path"],{"op": "direct" if task else "apply", "text": file_row["current"], "previous": previous, "stableId": suggestion["block_id"],
                               "after": suggestion["after_quote"], "mode": "source", "root": bool(file_row["is_root"])})
         if not result.get("ok"):
             self._set_suggestion(suggestion_id, "needs-review", "needs-review", actor["id"])
@@ -1320,7 +1340,7 @@ class Service:
         file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?",
                                    (project_id, path)).fetchone()
         previous = self._blocks(project_id, path)
-        result = self._node({"op": "structure", "text": file_row["current"], "previous": previous,
+        result = self._node_file(project_id,path,{"op": "structure", "text": file_row["current"], "previous": previous,
                              "stableId": stable_id, "action": action, "options": options,
                              "root": bool(file_row["is_root"])})
         if not result.get("ok"):
@@ -1379,7 +1399,7 @@ class Service:
         block = self._block_row(project_id, stable_id)
         file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?", (project_id, block["path"])).fetchone()
         previous = self._blocks(project_id, block["path"])
-        result = self._node({"op": "move", "text": file_row["current"], "previous": previous, "stableId": stable_id,
+        result = self._node_file(project_id,block["path"],{"op": "move", "text": file_row["current"], "previous": previous, "stableId": stable_id,
                               "toOffset": int(to_offset), "root": bool(file_row["is_root"])})
         if not result.get("ok"):
             raise ServiceError(409, result.get("error") or "The move needs review.")

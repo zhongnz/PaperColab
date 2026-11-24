@@ -27,11 +27,12 @@ function addCoverage(total, part) {
 
 function manuscriptCoverage(data, root, sources) {
   const total = blankCoverage();
+  const contexts=PaperColabBlocks.projectContexts([...data.files].filter(([name,file])=>/\.(tex|ltx|sty|cls)$/i.test(name)&&typeof file.text==='string').map(([name,file])=>[name,file.text]),data.roots);
   for (const source of sources) {
     if (!/\.(?:tex|ltx)$/i.test(source)) continue;
     const text = data.files.get(source)?.text;
     if (typeof text !== 'string') { total.uninspectedSources.push(source); continue; }
-    const parsedFile=PaperColabBlocks.parseFile(text, { root: source === root });
+    const parsedFile=PaperColabBlocks.parseFile(text, { root: source === root,macros:contexts[source]?new Map(contexts[source]):null });
     const report = PaperColabBlocks.coverage(parsedFile);
     addCoverage(total, report);
     if (report.fullFileFallback) total.fullFileFallbacks.push({source, reason: report.fullFileReason});

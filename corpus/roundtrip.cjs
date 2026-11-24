@@ -29,7 +29,9 @@ async function run(input, root, output, target = root) {
   assert.match(target, /\.(tex|ltx)$/i);
   const source = files.get(target)?.text;
   assert.equal(typeof source, 'string', 'Root must be readable UTF-8.');
-  const original = B.parseFile(source, {root:target === root});
+  const contextFor=files=>B.projectContexts([...files].filter(([name,file])=>/\.(tex|ltx|sty|cls)$/i.test(name)&&typeof file.text==='string').map(([name,file])=>[name,file.text]),inventory.roots);
+  const contexts=contextFor(files);
+  const original = B.parseFile(source, {root:target === root,macros:contexts[target]?new Map(contexts[target]):null});
   const report = B.coverage(original);
   const paragraph = original.blocks.find(b => b.kind === 'paragraph' && b.rich);
   assert.ok(paragraph, 'Expected an editable paragraph.');
@@ -49,7 +51,9 @@ async function run(input, root, output, target = root) {
     const expected = name === member ? Buffer.concat([bytes.subarray(0,offset), Buffer.from(B.current(original,paragraph)), bytes.subarray(end)]) : bytes;
     assert.deepEqual(after.get(name), expected, name);
   }
-  const imported = B.parseFile((await PaperColabArchive.readArchive(outputZip)).get(target).text, {root:target === root});
+  const importedFiles=await PaperColabArchive.readArchive(outputZip);
+  assert.deepEqual(contextFor(importedFiles),contexts,'Shared macro context must remain unchanged.');
+  const imported = B.parseFile(importedFiles.get(target).text, {root:target === root,macros:contexts[target]?new Map(contexts[target]):null});
   assert.ok(imported.blocks.some(b=>b.rich && B.preview(b.rich).includes('PaperColab round-trip check.')));
   // Re-import, edit in source mode, then restore the exact original cell.
   // Verify the visual/source round trip separately from the exported marker.

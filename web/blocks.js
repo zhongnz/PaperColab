@@ -75,6 +75,93 @@
     return registry;
   }
 
+  // Static, bounded cross-file context, not a TeX interpreter. Only a
+  // unique root with directly loaded literal declaration files and
+  // directly included leaf sections is eligible. Any uncertain include
+  // graph disables this optional extension; ordinary parsing remains.
+  function projectContexts(entries, roots) {
+    const empty=()=>Object.create(null);
+    if(!Array.isArray(entries)||!Array.isArray(roots)||roots.length!==1||entries.length>128)return empty();
+    const files=new Map(entries.filter(([p,t])=>/\.(tex|ltx|sty|cls)$/i.test(p)&&typeof t==='string'));
+    if([...files.values()].reduce((n,t)=>n+t.length,0)>2*1024*1024)return empty();
+    const root=roots[0],original=files.get(root);
+    if(typeof original!=='string')return empty();
+    const {text}=coordinates(original);
+    const unsafe=/\\(?:if[A-Za-z]*|else|fi|catcode|csname|expandafter|scantokens|obeylines|obeyspaces|ExplSyntaxOn)\b/;
+    if(unsafe.test(text))return empty();
+    let ast;
+    try{ast=PaperColabLatex.LatexPegParser.parse(text);}catch{return empty();}
+    const docs=ast.content.filter(n=>n.type==='environment'&&n.env==='document');
+    if(docs.length!==1)return empty();
+    const env=docs[0], top=ast.content.filter(n=>n.position.end.offset<=env.position.start.offset);
+    const dir=root.includes('/')?root.slice(0,root.lastIndexOf('/')+1):'';
+    function resolve(target){
+      if(!/^[A-Za-z0-9_.\/-]{1,200}$/.test(target)||target.startsWith('/')||
+         target.split('/').some(p=>!p||p==='.'||p==='..'))return null;
+      const names=/\.(tex|ltx)$/i.test(target)?[target]:[target,target+'.tex'];
+      const found=names.map(n=>dir+n).filter(n=>files.has(n)&&/\.(tex|ltx)$/i.test(n));
+      return found.length===1?found[0]:null;
+    }
+    function includes(nodes,allowed){
+      const list=[];
+      for(let i=0;i<nodes.length;i++){
+        const node=nodes[i];
+        if(node.type!=='macro'||!['input','include'].includes(node.content))continue;
+        const next=nodes[i+1];
+        if(!allowed.includes(node.content)||next?.type!=='group'||
+           node.position.end.offset!==next.position.start.offset)return null;
+        const source=text.slice(node.position.start.offset,next.position.end.offset);
+        const match=/^\\(?:input|include)\{([A-Za-z0-9_.\/-]+)\}$/.exec(source);
+        const path=match&&resolve(match[1]);
+        if(!path)return null;
+        list.push(path);
+      }
+      return list;
+    }
+    const preamble=includes(top,['input']),leaves=includes(env.content,['input','include']);
+    if(!preamble||!leaves||!preamble.length||
+       [...text.matchAll(/\\(?:input|include)\b/g)].length!==preamble.length+leaves.length||
+       /\\(?:subfile|import|subimport|InputIfFileExists|includeonly)\b/.test(text))return empty();
+    const all=[...preamble,...leaves];
+    if(all.includes(root)||new Set(all).size!==all.length)return empty();
+    const registry=declaredMacros(ast,env,text);
+    const pure=/^[ \t]*\\newcommand\*?\{\\[A-Za-z]{1,40}\}(?:\[[12]\])?\{[A-Za-z0-9 .,:;!?()/'#-]+\}[ \t]*$/;
+    for(const path of preamble){
+      const definitions=coordinates(files.get(path)).text;
+      const lines=definitions.split('\n').filter(l=>l.trim()&&!/^[ \t]*%/.test(l));
+      if(!lines.length||lines.some(l=>!pure.test(l)))return empty();
+      const wrapped=definitions+'\n\\begin{document}\n\\end{document}';
+      let parsed;
+      try{parsed=PaperColabLatex.LatexPegParser.parse(wrapped);}catch{return empty();}
+      const body=parsed.content.find(n=>n.type==='environment'&&n.env==='document');
+      if(!body)return empty();
+      const signatures=declaredMacros(parsed,body,wrapped);
+      if(signatures.size!==lines.length)return empty();
+      for(const [name,arity] of signatures){
+        if(registry.has(name))return empty();
+        registry.set(name,arity);
+      }
+      if(registry.size>100)return empty();
+    }
+    for(const path of leaves){
+      const source=files.get(path);
+      if(unsafe.test(source)||/\\(?:documentclass|input|include|subfile|import|subimport|InputIfFileExists|newcommand|renewcommand|providecommand|DeclareRobustCommand|def|gdef|edef|xdef|let|futurelet)\b/.test(source))return empty();
+    }
+    // Reject any visible competing declaration, even in an unreachable
+    // local source. External packages and dynamic TeX are not interpreted.
+    for(const name of [...registry.keys()]){
+      const re=new RegExp(String.raw`\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|def|gdef|edef|xdef|let|futurelet)\*?\s*(?:\{\s*)?\\`+name+String.raw`(?![A-Za-z@])`,'g');
+      let count=0;
+      for(const source of files.values())count += [...source.matchAll(re)].length;
+      if(count!==1)registry.delete(name);
+    }
+    if(!registry.size)return empty();
+    const signatures=[...registry].sort(([a],[b])=>a.localeCompare(b));
+    const result=empty();
+    for(const path of [root,...leaves].sort())result[path]=signatures;
+    return result;
+  }
+
   function asRich(nodes, slice, depth = 0, failures = null, macros = new Map(), trace = null) {
     const fail = command => {
       if (failures && command) failures.push(command);
@@ -243,7 +330,7 @@
     const docs = ast.content.filter(n => n.type === 'environment' && n.env === 'document');
     if (docs.length > 1 || (root && docs.length !== 1)) return rawFile('A single document body could not be identified.');
     const env = docs[0];
-    const macros = env ? declaredMacros(ast,env,text) : inheritedMacros ?? new Map();
+    const macros = inheritedMacros ?? (env ? declaredMacros(ast,env,text) : new Map());
     const nodes = env ? env.content : ast.content;
     if (nodes.some(ambiguous)) return rawFile('A conditional or unmatched delimiter makes the block boundaries uncertain.');
     const start = n => at(n.position.start.offset), end = n => at(n.position.end.offset);
@@ -638,7 +725,7 @@
       else if (old.from < start || old.to > end) throw new Error('The operation overlaps another cell.');
     }
     expected.sort((a, b) => a.from - b.from);
-    const parsed = parseFile(candidate, {root: Boolean(options.root)});
+    const parsed = parseFile(candidate, {root: Boolean(options.root),macros:file.macros});
     if (parsed.blocks.length !== expected.length || parsed.blocks.some((block, j) => {
       const want = expected[j];
       return block.kind !== want.kind || block.from !== want.from || block.to !== want.to ||
@@ -671,5 +758,5 @@
       .map(([command, blocks]) => ({ command, blocks }));
     return report;
   }
-  globalThis.PaperColabBlocks = { parseFile, current, rich, editVisual, editSource, exportText, preview, tokens, coverage, structural, scientific, scientificEdit, bibliographyKeys, appendCitation };
+  globalThis.PaperColabBlocks = { projectContexts, parseFile, current, rich, editVisual, editSource, exportText, preview, tokens, coverage, structural, scientific, scientificEdit, bibliographyKeys, appendCitation };
 })();

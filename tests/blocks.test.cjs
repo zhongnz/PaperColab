@@ -386,3 +386,26 @@ test('text patch maps escaped characters and astral Unicode without rewriting ne
   B.editVisual(file,p,next);
   assert.equal(B.exportText(file),source.replace('🐋','🐬'));
 });
+
+test('bounded shared preamble signatures reach only directly included leaf sections',()=>{
+  const root='paper/main.tex', leaf='paper/sections/results.tex';
+  const source='\\documentclass{article}\n\\input{macros}\n\\begin{document}\n\\input{sections/results}\n\\end{document}';
+  const definitions='\\newcommand{\\modelname}{Model A}\n\\newcommand{\\score}[1]{Score #1}\n';
+  const prose='We use \\modelname{} with \\score{A}.';
+  const entries=[[root,source],['paper/macros.tex',definitions],[leaf,prose],['paper/unreachable.tex',prose]];
+  const contexts=B.projectContexts(entries,[root]);
+  assert.deepEqual(contexts[leaf],[['modelname',0],['score',1]]);
+  assert.deepEqual(contexts[root],contexts[leaf]);
+  assert.equal(contexts['paper/unreachable.tex'],undefined);
+  const part=B.parseFile(prose,{macros:new Map(contexts[leaf])}),p=part.blocks[0];
+  assert.equal(p.kind,'paragraph');
+  B.editVisual(part,p,append(p.rich,' Done.'));
+  assert.equal(B.exportText(part),prose+' Done.');
+  const replace=(path,value)=>entries.map(([p,t])=>[p,p===path?value:t]);
+  assert.equal(Object.keys(B.projectContexts(replace('paper/macros.tex',definitions+'\\input{more}\n'),[root])).length,0);
+  assert.equal(Object.keys(B.projectContexts(replace(leaf,prose+'\\input{more}'),[root])).length,0);
+  assert.equal(Object.keys(B.projectContexts(replace(root,source.replace('\\input{macros}','\\input{../macros}')),[root])).length,0);
+  assert.equal(Object.keys(B.projectContexts(entries,[root,'other.tex'])).length,0);
+  const collision=B.projectContexts(replace('paper/unreachable.tex','\\renewcommand{\\modelname}{Other}'),[root]);
+  assert.deepEqual(collision[leaf],[['score',1]]);
+});

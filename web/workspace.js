@@ -3,6 +3,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const B = PaperColabBlocks, editors = PaperColabEditors;
+  let macroContexts=Object.create(null);
   let session, files = new Map(), path, block, visual, source, pending = false, exporting = false;
   let saved = new Map(), onClose, downloadFile;
   let sourcePending = false, splitPanel = null, manuscriptRoot = '';
@@ -17,7 +18,8 @@
   function openFile(name) {
     if (!files.has(name)) {
       const record = session.data.files.get(name);
-      files.set(name, B.parseFile(record.text, { root: session.data.roots.includes(name) }));
+      files.set(name, B.parseFile(record.text, { root: session.data.roots.includes(name),
+        macros:macroContexts[name]?new Map(macroContexts[name]):null }));
     }
     return files.get(name);
   }
@@ -444,6 +446,7 @@
   function open(archiveSession, selection, close, save) {
     if (session !== archiveSession) { files = new Map(); saved = new Map(); path = null; mode = 'document'; structuralHistory = new Map(); }
     session = archiveSession; onClose = close; downloadFile = save; manuscriptRoot = selection.root;
+    macroContexts=B.projectContexts([...session.data.files].filter(([name,data])=>/\.(tex|ltx|sty|cls)$/i.test(name)&&typeof data.text==='string').map(([name,data])=>[name,data.text]),session.data.roots);
     const paths = [selection.root, ...selection.sources.filter(name => name !== selection.root)]
       .filter(name => /\.(?:tex|ltx)$/i.test(name) && session.data.files.get(name)?.text !== undefined);
     const others = [...session.data.files].filter(([name, data]) =>
@@ -502,6 +505,8 @@
     updateControls();
     try {
       const snapshot = changes();
+      const next=B.projectContexts([...session.data.files].filter(([name,data])=>/\.(tex|ltx|sty|cls)$/i.test(name)&&typeof data.text==='string').map(([name,data])=>[name,snapshot.get(name)??data.text]),session.data.roots);
+      if(JSON.stringify(next)!==JSON.stringify(macroContexts))throw Error('Export changes shared macro context. Revert those edits before exporting.');
       const archive = await PaperColabArchive.exportArchive(session.blob, snapshot);
       downloadFile(archive, session.name.replace(/\.zip$/i, '') + '-papercolab.zip');
       saved = snapshot;

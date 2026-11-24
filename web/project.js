@@ -763,7 +763,7 @@
   async function showFile(path) {
     const payload = await api('GET', '/api/projects/' + detail.id + '/file?path=' + encodeURIComponent(path));
     fileText = payload.text;fileRevision=payload.revision;
-    fileMacros=B.parseFile(fileText,{root:Boolean(detail.files.find(f=>f.path===path)?.is_root)}).macros;
+    fileMacros=payload.macro_context?new Map(payload.macro_context):B.parseFile(fileText,{root:Boolean(detail.files.find(f=>f.path===path)?.is_root)}).macros;
     // Text and catalogue come from one server-side snapshot.
     detail.blocks=detail.blocks.filter(b=>b.path!==path).concat(payload.blocks);
     const host = $('blocks');
@@ -988,7 +988,7 @@
     selected = block;
     destroyEditors();updateView();
     const root = Boolean(detail.files.find(file => file.path === block.path)?.is_root);
-    const parsed = PaperColabBlocks.parseFile(fileText, { root });
+    const parsed = PaperColabBlocks.parseFile(fileText, { root,macros:fileMacros });
     const local = parsed.blocks.find(item => item.from === block.from && item.to === block.to && PaperColabBlocks.current(parsed,item)===block.quote);
     const line = fileText.slice(0, block.from).split(/\r\n|\r|\n/).length;
     $('block-label').textContent = block.path + ' · line ' + line + ' · ' + (block.rich ? 'editable' : 'preserved LaTeX') + (block.owner_id ? ' · owned' : '');
@@ -1066,7 +1066,7 @@
   async function propose(mode) {
     if (!selected?.rich) return;
     const root = Boolean(detail.files.find(file => file.path === selected.path)?.is_root);
-    const parsed = PaperColabBlocks.parseFile(fileText, { root });
+    const parsed = PaperColabBlocks.parseFile(fileText, { root,macros:fileMacros });
     const local = parsed.blocks.find(item => item.from === selected.from && item.to === selected.to);
     let after = selected.quote;
     if (mode === 'visual') {

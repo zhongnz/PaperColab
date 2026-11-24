@@ -7,18 +7,18 @@ require('../web/identity.js');
 const request = JSON.parse(readFileSync(0, 'utf8'));
 const I = PaperColabIdentity;
 
-function parse(text, root) {
-  return PaperColabBlocks.parseFile(text, { root: Boolean(root) });
+function parse(text, root, signatures=null) {
+  return PaperColabBlocks.parseFile(text, { root: Boolean(root),macros:signatures===null?null:new Map(signatures) });
 }
 
-function run(body) {
+function execute(body) {
   if (body.op === 'catalogue') {
-    const file = parse(body.text, body.root);
+    const file = parse(body.text, body.root,body.macros);
     return I.catalogue(file, body.previous || [], body.prefer || null);
   }
-  if (body.op === 'apply') return I.applyEdit(body.text, body.previous, body.stableId, body.after, body.root);
+  if (body.op === 'apply') return I.applyEdit(body.text, body.previous, body.stableId, body.after, body.root,body.macros==null?null:new Map(body.macros));
   if (body.op === 'direct') {
-    const B=PaperColabBlocks, file=parse(body.text,body.root);
+    const B=PaperColabBlocks, file=parse(body.text,body.root,body.macros);
     const old=body.previous.find(b=>b.stableId===body.stableId);
     const block=file.blocks.find(b=>b.from===old?.from && b.to===old?.to && B.current(file,b)===old.quote);
     if (!block || typeof body.after!=='string' || body.after===old.quote)
@@ -33,7 +33,7 @@ function run(body) {
       } else {
         next=B.exportText(B.structural(file,block.id,'scientific-source',{source:body.after,root:body.root}).file);
       }
-      const parsed=parse(next,body.root), delta=body.after.length-old.quote.length;
+      const parsed=parse(next,body.root,body.macros), delta=body.after.length-old.quote.length;
       if(parsed.blocks.length!==body.previous.length) throw new Error('Edit changes cell boundaries.');
       const blocks=parsed.blocks.map((cell,i)=>{
         const prior=body.previous[i], target=prior.stableId===old.stableId;
@@ -49,7 +49,7 @@ function run(body) {
     } catch(error) {return {ok:false,error:error.message};}
   }
   if (body.op === 'structure') {
-    const B=PaperColabBlocks,file=parse(body.text,body.root);
+    const B=PaperColabBlocks,file=parse(body.text,body.root,body.macros);
     try {
       if(file.blocks.length!==body.previous.length)throw Error('Cell catalogue no longer matches source.');
       const ids=new Map();
@@ -71,11 +71,29 @@ function run(body) {
       return {ok:true,text:B.exportText(result.file),blocks,selectedId:ids.get(result.selectedId)??null};
     }catch(error){return {ok:false,error:error.message};}
   }
-  if (body.op === 'move') return I.moveBlock(body.text, body.previous, body.stableId, body.toOffset, body.root);
+  if (body.op === 'move') return I.moveBlock(body.text, body.previous, body.stableId, body.toOffset, body.root,body.macros==null?null:new Map(body.macros));
   if (body.op === 'resolve') return I.resolveAnchor(body.blocks, body.anchor);
   throw new Error('Unknown block operation.');
 }
 
+function run(body){
+  const B=PaperColabBlocks;
+  const context=body.project?B.projectContexts(body.project.entries,body.project.roots):null;
+  if(body.op==='context')return context??{};
+  if(context)body={...body,macros:context[body.path]??null};
+  // Legacy offset moves can reorder preamble inputs; require the
+  // bounded structural API for projects using cross-file context.
+  if(body.op==='move'&&context&&Object.keys(context).length)
+    return {ok:false,error:'Use cell structural operations in a project with cross-file macro context.'};
+  const result=execute(body);
+  if(context&&result.ok&&typeof result.text==='string'){
+    const entries=body.project.entries.map(([p,t])=>[p,p===body.path?result.text:t]);
+    const next=B.projectContexts(entries,body.project.roots);
+    if(JSON.stringify(context)!==JSON.stringify(next))
+      return {ok:false,error:'Edit changes the shared macro context. A reviewed context migration is required.'};
+  }
+  return result;
+}
 try {
   process.stdout.write(JSON.stringify(run(request)));
 } catch (error) {

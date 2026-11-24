@@ -633,6 +633,35 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(blocked["unmatched_old"],1)
         self.assertEqual(s.file_text(a["ada"],p,path)["text"],before)
 
+    def test_cross_file_macro_context_shared_by_import_and_edits(self):
+        s,a=self.service,self.actors
+        p=s.create_project(a["ada"],"Macro fixture")["id"]
+        root="paper/main.tex"
+        leaf="paper/sections/results.tex"
+        original="We use \\modelname{} in this research."
+        definitions=b"\\newcommand{\\modelname}{Model A}\n"
+        s.import_files(a["ada"],p,[(leaf,original.encode()),("paper/macros.tex",definitions),
+            (root,b"\\documentclass{article}\n\\input{macros}\n\\begin{document}\n\\input{sections/results}\n\\end{document}")])
+        s.add_member(a["ada"],p,a["bao"]["id"],"author")
+        s.add_member(a["ada"],p,a["iris"]["id"],"reviewer")
+        data=s.file_text(a["bao"],p,leaf)
+        self.assertEqual(data["macro_context"],[["modelname",0]])
+        cell=data["blocks"][0]
+        self.assertTrue(cell["rich"])
+        key=cell["stableId"]
+        changed=original.replace("this research","the study")
+        s.direct_edit(a["bao"],p,key,cell["version"],original,changed,"visual")
+        current=s.file_text(a["bao"],p,leaf)
+        self.assertEqual(current["text"],changed)
+        self.assertEqual(current["blocks"][0]["stableId"],key)
+        suggestion=s.propose(a["bao"],p,key,current["revision"],changed,changed+" Verified.","source")
+        s.accept(a["iris"],p,suggestion["id"])
+        self.assertEqual(s.file_text(a["bao"],p,leaf)["text"],changed+" Verified.")
+        self.assertEqual(s.file_text(a["ada"],p,"paper/macros.tex")["text"].encode(),definitions)
+        with self.assertRaises(ServiceError):
+            s.move_block(a["bao"],p,key,0)
+        self.assertEqual(s.upgrade_catalogue(a["ada"],p,leaf)["status"],"unchanged")
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")
