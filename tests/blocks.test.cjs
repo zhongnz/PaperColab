@@ -242,3 +242,23 @@ test('citation keys and explicit citation insertion retain existing tokens',()=>
   assert.deepEqual(B.tokens(B.rich(file,p)),['$x$','\\cite{one}']);
   assert.throws(()=>B.appendCitation(file,p,'bad}'),/citation/);
 });
+
+test('scientific source edits and field edits share validated source checkpoints',()=>{
+  const source='Before.\r\n\r\n\\begin{equation}\r\nx = y\r\n\\end{equation}\r\n\r\nAfter.';
+  const file=B.parseFile(source), [a,e,z]=file.blocks;
+  const result=B.structural(file,e.id,'scientific-source',{source:'\\begin{equation}\r\nx = z\r\n\\end{equation}'});
+  assert.equal(B.exportText(result.file),source.replace('x = y','x = z'));
+  assert.deepEqual(result.file.blocks.map(b=>b.id),[a.id,e.id,z.id]);
+  assert.equal(B.scientific(B.current(result.file,result.file.blocks[1])).fields[0].value,'\r\nx = z\r\n');
+  assert.throws(()=>B.structural(file,e.id,'scientific-source',{source:'\\begin{equation}x\\end{equation}\n\nExtra.'}),/Keep one supported/);
+  assert.equal(B.exportText(file),source);
+});
+test('archive reader retains local bibliography text without modifying ZIP',async()=>{
+  const writer=new zip.ZipWriter(new zip.BlobWriter(),{useWebWorkers:false});
+  const bib='@article{local,\n title={Local reference}\n}';
+  await writer.add('references.bib',new zip.TextReader(bib));
+  const blob=await writer.close(), files=await A.readArchive(blob);
+  assert.equal(files.get('references.bib').text,bib);
+  assert.deepEqual(B.bibliographyKeys(files.get('references.bib').text),['local']);
+  assert.strictEqual(await A.exportArchive(blob,new Map()),blob);
+});

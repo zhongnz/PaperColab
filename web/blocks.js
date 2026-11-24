@@ -317,6 +317,7 @@
     let candidate=source;
     for (let i=model.fields.length-1;i>=0;i--) {
       const field=model.fields[i], value=values[i];
+      if (value===field.value) continue;
       if (typeof value!=='string' || value.length>16000 ||
           !(model.type==='equation' ? safeMath(value) : model.type==='figure' && i===0 ? assetPath(value) : plainField(value)) ||
           (model.type==='table' || model.type==='list') && (!value.trim() || value!==value.trim()))
@@ -348,7 +349,7 @@
       return { id: block.id, kind: block.kind, rich: rich(file, block), source, from, to };
     });
     const i = rows.findIndex(row => row.id === id), row = rows[i];
-    if (!row || (!row.rich && !(action === 'scientific' && scientific(row.source)))) throw new Error('Select an editable cell; preserved LaTeX cannot be changed structurally.');
+    if (!row || (!row.rich && !(['scientific','scientific-source'].includes(action) && scientific(row.source)))) throw new Error('Select an editable cell; preserved LaTeX cannot be changed structurally.');
     const eol = text.match(/\r\n|\r|\n/)?.[0] ?? '\n', sep = eol + eol;
     let nextId = rows.reduce((n, r) => Math.max(n, r.id + 1), file.nextId ?? 1);
     const fresh = () => nextId++;
@@ -376,8 +377,14 @@
         prefix = suffix = sep;
         break;
       }
-      case 'scientific': {
-        const source = scientificEdit(row.source, options.values);
+      case 'scientific':
+      case 'scientific-source': {
+        const model = scientific(row.source);
+        if (!model || row.kind !== 'raw') throw new Error('Unsupported scientific cell.');
+        const source = action === 'scientific' ? scientificEdit(row.source, options.values) : options.source;
+        const next = typeof source === 'string' && source.length <= 512 * 1024 && scientific(source);
+        if (!next || next.type !== model.type)
+          throw new Error('Keep one supported ' + model.type + ' cell. The source draft has not been applied.');
         items = [piece(id, 'raw', source)];
         break;
       }

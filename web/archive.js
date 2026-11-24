@@ -4,7 +4,7 @@
   const MiB = 1024 * 1024;
   const limits = { archive: 64 * MiB, expanded: 256 * MiB, entries: 4000, text: 4 * MiB, allText: 32 * MiB };
   const isConversation = path => /(^|\/)conversations?\//i.test(path);
-  const isText = path => /\.(tex|ltx|cls|sty|json)$/i.test(path) && !isConversation(path);
+  const isText = path => /\.(tex|ltx|cls|sty|bib|json)$/i.test(path) && !isConversation(path);
   const validPath = path => path.length <= 1024 && !/[\\:\u0000-\u001f\u007f]/.test(path) &&
     path.split('/').every(part => part && part !== '.' && part !== '..');
 

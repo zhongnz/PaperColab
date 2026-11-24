@@ -5,6 +5,7 @@
   const B = PaperColabBlocks, editors = PaperColabEditors;
   let session, files = new Map(), path, block, visual, source, pending = false, exporting = false;
   let saved = new Map(), onClose, downloadFile;
+  let sourcePending = false, splitPanel = null;
   let mode = 'document', mounted = new Map(), drafts = new Map(), structuralHistory = new Map();
   const checkpointChanged = (name, part) => part.original !== session.data.files.get(name).text;
   const multi = () => mode === 'document' || mode === 'cells';
@@ -40,7 +41,9 @@
   function unmount() {
     visual?.destroy(); source?.destroy(); visual = source = null;
     for (const entry of mounted.values()) entry.destroy();
-    mounted.clear(); drafts.clear();
+    mounted.clear(); drafts.clear(); sourcePending = false; splitPanel = null;
+    $('source-surface').inert = false;
+    $('visual-section').querySelector('.formatting').hidden = false;
     $('multi-surface').replaceChildren();
     $('visual-surface').replaceChildren(); $('source-surface').replaceChildren();
   }
@@ -56,13 +59,17 @@
       button.disabled = locked;
       button.setAttribute('aria-pressed', String(button.dataset.view === mode));
     }
-    $('undo-structure').hidden = mode !== 'cells';
+    $('undo-structure').hidden = !structuralHistory.get(path)?.length && mode !== 'cells';
     $('undo-structure').disabled = locked || !structuralHistory.get(path)?.length || Boolean(file()?.edits.size);
     for (const el of $('multi-surface').querySelectorAll('[data-structure]')) el.disabled = locked;
     $('back-report').disabled = locked;
     $('export-project').disabled = locked;
     for (const el of $('block-list').children) el.disabled = locked;
-    $('apply-source').hidden = $('discard-source').hidden = !pending;
+    $('apply-source').hidden = $('discard-source').hidden = !sourcePending;
+    if (splitPanel) {
+      splitPanel.inert = sourcePending || exporting;
+      $('source-surface').inert = drafts.size > 0 || exporting;
+    }
     $('revert-block').hidden = !block?.rich;
     $('revert-block').disabled = locked || !file()?.edits.has(block?.id);
     if (visual) {
@@ -92,15 +99,19 @@
     return value.replace(/\n/g, eol);
   }
 
+  function checkpoint(old, result) {
+    if (!structuralHistory.has(path)) structuralHistory.set(path, []);
+    structuralHistory.get(path).push(old);
+    files.set(path, result.file);
+    pending = false; sourcePending = false;
+    showFile(path, result.selectedId);
+  }
   function structural(part, action, options = {}) {
     if (pending || exporting) return;
     try {
       const old = file();
       const result = B.structural(old, part.id, action, {...options, root: session.data.roots.includes(path)});
-      if (!structuralHistory.has(path)) structuralHistory.set(path, []);
-      structuralHistory.get(path).push(old);
-      files.set(path, result.file);
-      showFile(path, result.selectedId);
+      checkpoint(old, result);
       note('Cell structure updated. Use Undo structure to restore the preceding checkpoint.');
     } catch (error) { note(error.message); }
   }
@@ -159,30 +170,31 @@
     apply.type=discard.type='button'; apply.textContent='Apply scientific fields'; discard.textContent='Discard fields';
     const status=document.createElement('p'); status.className='cell-status'; status.setAttribute('role','status');
     const update=()=>{
-      const dirty=inputs.some((input,i)=>input.value!==model.fields[i].value);
+      const dirty=inputs.some((input,i)=>input.value!==normalise(model.fields[i].value));
       if(dirty) drafts.set(part.id,true); else drafts.delete(part.id);
-      pending=drafts.size>0; apply.disabled=discard.disabled=!dirty;
+      pending=sourcePending || drafts.size>0; apply.disabled=discard.disabled=!dirty;
       status.textContent=dirty?'Apply or discard the scientific draft before changing views or exporting.':'';
       updateControls();
     };
     inputs.forEach(input=>input.addEventListener('input',update));
     discard.onclick=()=>{inputs.forEach((input,i)=>{input.value=model.fields[i].value; input.dispatchEvent(new Event('input'));});};
     apply.onclick=()=>{
-      if(!drafts.has(part.id) || exporting) return;
+      if(!drafts.has(part.id) || exporting || sourcePending) return;
       if(drafts.size!==1){status.textContent='Apply or discard other cell drafts first.';return;}
       // Validate while the draft is still retained. Only a successful
       // checkpoint can remove it and rebuild the view.
       try {
         const old=file();
-        const result=B.structural(old,part.id,'scientific',{values:inputs.map(input=>input.value),root:session.data.roots.includes(path)});
-        if(!structuralHistory.has(path)) structuralHistory.set(path,[]);
-        structuralHistory.get(path).push(old);
-        files.set(path,result.file); pending=false;
-        showFile(path,result.selectedId); note('Scientific fields applied.');
+        const values=inputs.map((input,i)=>input.value===normalise(model.fields[i].value)
+          ? model.fields[i].value
+          : input.value.replace(/\n/g,model.fields[i].value.match(/\r\n|\r|\n/)?.[0] ?? '\n'));
+        const result=B.structural(old,part.id,'scientific',{values,root:session.data.roots.includes(path)});
+        checkpoint(old,result); note('Scientific fields applied.');
       } catch(error){status.textContent=error.message;}
     };
     apply.disabled=discard.disabled=true;
     actions.append(apply,discard); panel.append(actions,status); host.append(panel);
+    return panel;
   }
   function citationPicker(header, part, area, sync) {
     if(part.kind!=='paragraph') return;
@@ -234,7 +246,10 @@
         raw.append(summary, pre);
         content.append(raw);
         const model=B.scientific(B.current(file(),part));
-        if(model) { cell.classList.add('scientific-cell'); scientificPanel(content,part,model); }
+        if(model) {
+          cell.classList.add('scientific-cell');
+          scientificPanel(content,part,model);
+        }
         cell.addEventListener('focusin',()=>select(part));
         mounted.set(part.id, {cell, destroy() {}});
         continue;
@@ -367,8 +382,10 @@
     $('block-detail').hidden = !item;
     if (!item) { updateControls(); return; }
     const isRich = Boolean(item.rich);
-    $('visual-section').hidden = !isRich || mode === 'source';
-    $('raw-explanation').hidden = isRich;
+    const science = !isRich && item.kind==='raw' ? B.scientific(B.current(file(),item)) : null;
+    $('visual-section').hidden = (!isRich && !science) || mode === 'source';
+    $('raw-explanation').hidden = isRich || Boolean(science);
+    $('visual-section').querySelector('.formatting').hidden = !isRich;
     $('raw-explanation').textContent = item.reason ?? 'PaperColab preserves this block as original LaTeX.';
     $('block-title').textContent = item.kind === 'heading' ? 'Section heading' : isRich ? 'Paragraph' : item.label;
     const line = file().original.slice(0, item.from).split(/\r\n|\r|\n/).length;
@@ -384,8 +401,10 @@
         onProtected: () => note('Use the LaTeX pane to change a citation or math expression.')
       });
     }
-    source = editors.source($('source-surface'), B.current(file(), item), !isRich, value => {
-      pending = value !== normalise(B.current(file(), item));
+    if (science && mode !== 'source') splitPanel=scientificPanel($('visual-surface'),item,science);
+    source = editors.source($('source-surface'), B.current(file(), item), !isRich && !science, value => {
+      sourcePending = value !== normalise(B.current(file(), item));
+      pending = sourcePending || drafts.size > 0;
       visual?.setEditable(!pending, false);
       updateControls();
       note(pending ? 'Apply or discard your LaTeX changes before switching blocks.' : '');
@@ -402,7 +421,8 @@
       button.type = 'button';
       button.dataset.id = item.id;
       const kind = document.createElement('small');
-      kind.textContent = item.kind === 'raw' ? 'Preserved LaTeX' : item.kind === 'heading' ? 'Heading' : 'Paragraph';
+      const type = item.kind==='raw' ? B.scientific(B.current(file(),item))?.type : null;
+      kind.textContent = type ? type[0].toUpperCase()+type.slice(1) : item.kind === 'raw' ? 'Preserved LaTeX' : item.kind === 'heading' ? 'Heading' : 'Paragraph';
       const excerpt = document.createElement('span');
       excerpt.className = 'block-excerpt';
       excerpt.textContent = navTitle(item);
@@ -457,11 +477,19 @@
     $(id).onclick = () => { if (visual) { editors[command](visual); visual.commands.focus(); } updateControls(); };
   }
   $('apply-source').onclick = () => {
-    if (!pending) return;
+    if (!sourcePending || drafts.size) return;
     const eol = B.current(file(), block).match(/\r\n|\r|\n/)?.[0] ?? file().original.match(/\r\n|\r|\n/)?.[0] ?? '\n';
     const value = source.value().replace(/\n/g, eol);
-    try { B.editSource(file(), block, value); showBlock(block); refreshTitle(); note('LaTeX changes applied.'); }
-    catch (error) { note(error.message); }
+    try {
+      if (!block.rich && B.scientific(B.current(file(),block))) {
+        const old=file();
+        const result=B.structural(old,block.id,'scientific-source',{source:value,root:session.data.roots.includes(path)});
+        checkpoint(old,result);
+      } else {
+        B.editSource(file(), block, value); showBlock(block); refreshTitle();
+      }
+      note('LaTeX changes applied.');
+    } catch (error) { note(error.message); }
   };
   $('discard-source').onclick = () => { showBlock(block); note('Source draft discarded.'); };
   $('revert-block').onclick = () => { file().edits.delete(block.id); showBlock(block); refreshTitle(); note('Original block restored.'); };
