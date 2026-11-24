@@ -26,3 +26,5 @@ contract suite. Results are not claimed until it executes. A passing local
 replica test does not authorise production deployment or imply that one engine
 outperforms the other. The earlier LibrePaper experiment is additional evidence
 rather than a substitute for the same tests on both candidates.
+
+The initial comparative CI trial passed both engines (run 45414737947). For the next isolated transport experiment use Yjs, while production selection remains open. See [transport design and limitations](crdt-transport.md).

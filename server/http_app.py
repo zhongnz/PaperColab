@@ -54,6 +54,11 @@ class Api:
             return self.service.import_zip(actor, bits[2], body)
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "revision" and method == "GET":
             return self.service.manuscript_revision(actor, bits[2])
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "blocks" and bits[5] == "crdt":
+            if method == "GET":
+                return self.service.crdt_state(actor, bits[2], bits[4])
+            if method == "POST":
+                return self.service.crdt_update(actor, bits[2], bits[4], data.get("version"), data.get("epoch"), data.get("update"))
         if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "blocks" and bits[5] == "edit" and method == "POST":
             return self.service.direct_edit(actor, bits[2], bits[4], data.get("version"), data.get("before"), data.get("after"), data.get("mode"))
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "file" and method == "GET":

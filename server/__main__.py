@@ -71,7 +71,10 @@ def main():
     if demo and host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("Refusing demo credentials on a non-local address.")
     data = Path(os.environ.get("PAPERCOLAB_DATA", ROOT / "data"))
-    service = Service(data / "papercolab.sqlite", demo=demo)
+    crdt = os.environ.get("PAPERCOLAB_EXPERIMENTAL_CRDT") == "1"
+    if crdt and host not in {"127.0.0.1", "localhost", "::1"}:
+        raise SystemExit("Experimental collaboration is loopback-only.")
+    service = Service(data / "papercolab.sqlite", demo=demo, crdt=crdt)
     if not demo and not service.db.execute("SELECT id FROM actors").fetchone():
         token = __import__("secrets").token_urlsafe(24)
         service._insert_actor("Operator", "human", token, "operator")

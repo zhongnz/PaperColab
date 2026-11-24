@@ -5,6 +5,8 @@ releases. Visual and source proposals share review records. Human authors may
 also submit explicitly version-checked direct cell edits.
 """
 import json
+import base64
+import binascii
 import os
 from pathlib import Path
 import re
@@ -37,7 +39,8 @@ class ServiceError(Exception):
 
 
 class Service:
-    def __init__(self, database, demo=False, clock=None):
+    def __init__(self, database, demo=False, clock=None, crdt=False):
+        self.crdt = crdt
         self.demo = demo
         self.clock = clock or time.time
         self.path = Path(database)
@@ -73,6 +76,10 @@ class Service:
           start INTEGER NOT NULL, end INTEGER NOT NULL, quote TEXT NOT NULL, label TEXT NOT NULL,
           rich INTEGER NOT NULL, fallback TEXT NOT NULL, commands TEXT NOT NULL, owner_id TEXT,
           PRIMARY KEY (project_id, stable_id));
+        CREATE TABLE IF NOT EXISTS crdt_cells (
+          project_id TEXT NOT NULL, block_id TEXT NOT NULL, version INTEGER NOT NULL,
+          epoch TEXT NOT NULL, quote TEXT NOT NULL, snapshot TEXT NOT NULL, vector TEXT NOT NULL,
+          PRIMARY KEY (project_id, block_id));
         CREATE TABLE IF NOT EXISTS suggestions (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL, block_id TEXT NOT NULL, actor_id TEXT NOT NULL,
           mode TEXT NOT NULL, base_revision INTEGER NOT NULL, before_quote TEXT NOT NULL, after_quote TEXT NOT NULL,
@@ -344,6 +351,7 @@ class Service:
             raise ServiceError(400, "The import is empty.")
         if len(files) > 4000:
             raise ServiceError(400, "The import has more than 4,000 files.")
+        self.db.execute("DELETE FROM crdt_cells WHERE project_id = ?", (project_id,))
         self.db.execute("DELETE FROM blocks WHERE project_id = ?", (project_id,))
         self.db.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
         self.db.execute("""DELETE FROM object_versions WHERE object_id IN
@@ -433,7 +441,74 @@ class Service:
             raise ServiceError(404, "Unknown project.")
         return {"revision": row["revision"]}
 
-    def direct_edit(self, actor, project_id, stable_id, version, before, after, mode):
+    def _crdt_author(self, actor, project_id):
+        if not self.crdt:
+            raise ServiceError(404, "Experimental collaboration is disabled.")
+        self.require(actor, project_id, "direct")
+
+    def _crdt_worker(self, payload):
+        # A bounded, short-lived worker. This is NOT an OS sandbox.
+        try:
+            proc = subprocess.run(["node", "--max-old-space-size=128",
+                                   str(ROOT / "experiments" / "crdt" / "transport.mjs")],
+                                  input=json.dumps(payload), text=True, capture_output=True,
+                                  cwd=ROOT, timeout=5)
+            result = json.loads(proc.stdout)
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            raise ServiceError(503, "Experimental collaboration worker unavailable.")
+        if proc.returncode or not result.get("ok"):
+            raise ServiceError(400, "Invalid or unsupported collaboration update.")
+        return result
+
+    def crdt_state(self, actor, project_id, stable_id):
+        self._crdt_author(actor, project_id)
+        block = self._block_row(project_id, stable_id)
+        if not block["rich"]:
+            raise ServiceError(400, "Experimental collaboration supports editable prose and headings only.")
+        if len(block["quote"].encode("utf-8")) > 128 * 1024:
+            raise ServiceError(400, "Cell exceeds the experimental collaboration limit.")
+        row = self.db.execute("SELECT * FROM crdt_cells WHERE project_id = ? AND block_id = ?",
+                              (project_id, stable_id)).fetchone()
+        if not row or row["version"] != block["version"] or row["quote"] != block["quote"]:
+            result = self._crdt_worker({"op": "seed", "text": block["quote"]})
+            with self.db:
+                self.db.execute("""INSERT OR REPLACE INTO crdt_cells
+                                   (project_id, block_id, version, epoch, quote, snapshot, vector)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                (project_id, stable_id, block["version"], str(uuid.uuid4()), block["quote"],
+                                 result["snapshot"], result["vector"]))
+            row = self.db.execute("SELECT * FROM crdt_cells WHERE project_id = ? AND block_id = ?",
+                                  (project_id, stable_id)).fetchone()
+        return {"block_id": stable_id, "version": row["version"], "epoch": row["epoch"],
+                "quote": row["quote"], "snapshot": row["snapshot"], "vector": row["vector"]}
+
+    def crdt_update(self, actor, project_id, stable_id, version, epoch, update):
+        self._crdt_author(actor, project_id)
+        if type(version) is not int or not isinstance(epoch, str) or not isinstance(update, str) or len(update) > 350000:
+            raise ServiceError(400, "Provide a version, epoch and bounded base64 update.")
+        try:
+            raw = base64.b64decode(update, validate=True)
+        except (ValueError, binascii.Error):
+            raise ServiceError(400, "Invalid base64 update.")
+        if not raw or len(raw) > 256 * 1024:
+            raise ServiceError(400, "Update exceeds the experimental limit.")
+        block = self._block_row(project_id, stable_id)
+        row = self.db.execute("SELECT * FROM crdt_cells WHERE project_id = ? AND block_id = ?",
+                              (project_id, stable_id)).fetchone()
+        if (not row or not block["rich"] or row["epoch"] != epoch or row["version"] != version
+                or block["version"] != version or row["quote"] != block["quote"]):
+            raise ServiceError(409, "Collaboration checkpoint changed. Retain your local draft and reload the cell.")
+        result = self._crdt_worker({"op": "apply", "snapshot": row["snapshot"], "update": update,
+                                    "before": block["quote"]})
+        if result["text"] == block["quote"]:
+            raise ServiceError(409, "Update does not change the accepted cell.")
+        # Both the source change and its snapshot commit in the same SQLite
+        # transaction. A failed parser check must never persist the update.
+        saved = self.direct_edit(actor, project_id, stable_id, version, block["quote"], result["text"],
+                                 "source", crdt_checkpoint=(epoch, result["snapshot"], result["vector"]))
+        return {**saved, "epoch": epoch, "snapshot": result["snapshot"], "vector": result["vector"]}
+
+    def direct_edit(self, actor, project_id, stable_id, version, before, after, mode, crdt_checkpoint=None):
         """Human-only optimistic cell mutation; unrelated cells may advance independently."""
         self.require(actor, project_id, "direct")
         if mode not in {"visual", "source"} or type(version) is not int or version < 1 or not isinstance(before, str) or not isinstance(after, str):
@@ -460,7 +535,14 @@ class Service:
             self.db.execute("""UPDATE suggestions SET status = 'stale', result = 'stale'
                                WHERE project_id = ? AND block_id = ? AND status = 'pending'""",
                             (project_id, stable_id))
-            self._audit(actor["id"], "direct-edit", project_id,
+            if crdt_checkpoint is not None:
+                epoch, snapshot, vector = crdt_checkpoint
+                self.db.execute("""UPDATE crdt_cells SET version = ?, quote = ?, snapshot = ?, vector = ?
+                                   WHERE project_id = ? AND block_id = ? AND epoch = ?""",
+                                (version + 1, after, snapshot, vector, project_id, stable_id, epoch))
+            else:
+                self.db.execute("DELETE FROM crdt_cells WHERE project_id = ? AND block_id = ?", (project_id, stable_id))
+            self._audit(actor["id"], "crdt-checkpoint" if crdt_checkpoint is not None else "direct-edit", project_id,
                         {"block": stable_id, "revision": revision, "mode": mode,
                          "before": before, "after": after, "base_version": version})
         return {"revision": revision, "block": next(b for b in self._blocks(project_id, block["path"])
@@ -820,6 +902,8 @@ class Service:
         Path(name).unlink(missing_ok=True)
         self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        self._schema()
+        self.db.execute("DELETE FROM crdt_cells")
         self._audit(actor["id"], "restore", None, {"bytes": len(blob)})
         self.db.commit()
         return {"restored": True}
@@ -840,7 +924,7 @@ class Service:
         return {"removed": removed}
 
     def _delete_project(self, project_id):
-        for table in ("members", "blocks", "files", "suggestions", "anchors", "comments", "links", "decisions"):
+        for table in ("members", "blocks", "files", "suggestions", "anchors", "comments", "links", "decisions", "crdt_cells"):
             self.db.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
         self.db.execute("DELETE FROM object_versions WHERE object_id IN (SELECT id FROM objects WHERE project_id = ?)", (project_id,))
         self.db.execute("DELETE FROM objects WHERE project_id = ?", (project_id,))

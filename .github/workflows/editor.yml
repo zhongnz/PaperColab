@@ -22,3 +22,5 @@ jobs:
         run: npm install --prefix experiments/crdt --ignore-scripts --no-audit --no-fund
       - name: Compare CRDT source and checkpoint contracts
         run: npm test --prefix experiments/crdt
+      - name: Exercise authenticated experimental checkpoint transport
+        run: python3 experiments/crdt/transport_test.py
