@@ -75,26 +75,36 @@
     return registry;
   }
 
-  function asRich(nodes, slice, depth = 0, failures = null, macros = new Map()) {
+  function asRich(nodes, slice, depth = 0, failures = null, macros = new Map(), trace = null) {
     const fail = command => {
       if (failures && command) failures.push(command);
       return null;
     };
     if (depth > 12) return fail('nesting');
     const result = [];
-    function append(item) {
+    function append(item, spans = null) {
       const previous = result.at(-1);
-      if (item.type === 'text' && previous?.type === 'text' && same(item.marks, previous.marks)) previous.text += item.text;
-      else result.push(item);
+      if (trace && spans) trace.map.set(item,spans);
+      if (item.type === 'text' && previous?.type === 'text' && same(item.marks, previous.marks)) {
+        if(trace) trace.map.set(previous,[...(trace.map.get(previous)??[]),...(trace.map.get(item)??[])]);
+        previous.text += item.text;
+      } else result.push(item);
     }
+    const range = n => [{from:trace?.at(n.position.start.offset),to:trace?.at(n.position.end.offset)}];
     const raw = n => slice(n.position.start.offset, n.position.end.offset);
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i], next = nodes[i + 1];
-      if (node.type === 'whitespace') { append({ type: 'text', text: ' ' }); continue; }
+      if (node.type === 'whitespace') { append({ type: 'text', text: ' ' },range(node)); continue; }
       if (node.type === 'string') {
         const text = raw(node);
         if (/[\\{}$%&#_^\x00-\x1f]/.test(text)) return fail('special character');
-        if (text) append({ type: 'text', text: text.replace(/~/g, '\u00a0') });
+        if (text) {
+          let offset=node.position.start.offset;
+          const spans=trace ? Array.from(text,ch=>{
+            const from=trace.at(offset);offset+=ch.length;return {from,to:trace.at(offset)};
+          }) : null;
+          append({ type: 'text', text: text.replace(/~/g, '\u00a0') },spans);
+        }
         continue;
       }
       if (node.type === 'inlinemath') {
@@ -123,7 +133,7 @@
       if (node.type !== 'macro') return fail(node.type);
       const name = node.content;
       if (name.length === 1 && '#$%&_{}'.includes(name) && raw(node) === '\\' + name) {
-        append({ type: 'text', text: name }); continue;
+        append({ type: 'text', text: name },range(node)); continue;
       }
       if (macros.has(name)) {
         const arity = macros.get(name);
@@ -158,9 +168,9 @@
       }
       if (next?.type !== 'group' || node.position.end.offset !== next.position.start.offset) return fail(name);
       if (Object.hasOwn(namedEscapes, name) && !next.content.length) {
-        append({ type: 'text', text: namedEscapes[name] });
+        append({ type: 'text', text: namedEscapes[name] },[{from:trace?.at(node.position.start.offset),to:trace?.at(next.position.end.offset)}]);
       } else if (Object.hasOwn(marks, name)) {
-        const children = asRich(next.content, slice, depth + 1, failures, macros);
+        const children = asRich(next.content, slice, depth + 1, failures, macros, trace);
         if (!children?.length) return failures?.length ? null : fail(name);
         for (const child of children) {
           const existing = child.marks ?? [];
@@ -209,7 +219,7 @@
   const isSpace = node => node.type === 'whitespace' || node.type === 'parbreak';
 
   function parseFile(original, { root = false, macros: inheritedMacros = null } = {}) {
-    const blocks = [];
+    const blocks = [], textSpans=new WeakMap();
     function add(kind, from, to, info = {}) {
       if (from >= to || !original.slice(from, to).trim()) return;
       blocks.push({ id: blocks.length + 1, kind, from, to, ...info });
@@ -217,7 +227,7 @@
     const rawFile = reason => {
       blocks.length = 0;
       add('raw', 0, original.length, { label: 'Original source', reason });
-      return { original, blocks, edits: new Map(), macros: new Map() };
+      return { original, blocks, edits: new Map(), macros: new Map(), textSpans };
     };
     if (new TextEncoder().encode(original).length > 512 * 1024) return rawFile('This file exceeds the visual editor’s 512 KiB text limit.');
     const { text, at } = coordinates(original);
@@ -235,7 +245,7 @@
     const start = n => at(n.position.start.offset), end = n => at(n.position.end.offset);
     function represent(nodes) {
       const commands = [];
-      const rich = asRich(nodes, slice, 0, commands, macros);
+      const rich = asRich(nodes, slice, 0, commands, macros, {map:textSpans,at});
       return { rich, commands: [...new Set(commands)] };
     }
     if (env) add('raw', 0, nodes.length ? start(nodes[0]) : end(env), { label: 'Document opening' });
@@ -289,7 +299,7 @@
     }
     flush();
     if (env && nodes.length) add('raw', end(nodes.at(-1)), original.length, { label: 'Document closing' });
-    return { original, blocks, edits: new Map(), macros };
+    return { original, blocks, edits: new Map(), macros, textSpans };
   }
 
   function originalBlock(file, block) { return file.original.slice(block.from, block.to); }
@@ -300,13 +310,52 @@
     else file.edits.set(block.id, { source, rich: content });
   }
 
+  // Map a single changed visual text run back to exact source offsets.
+  // Compare a reparse with the intended visual representation; never
+  // substitute a source patch on ambiguous/non-contiguous boundaries.
+  function patchText(source, kind, macros, content) {
+    const parsed=parseFile(source,{macros}), block=parsed.blocks[0];
+    if(parsed.blocks.length!==1||block?.kind!==kind||!block.rich||
+       block.from!==0||block.to!==source.length)return null;
+    const before=block.rich.content[0].content??[], after=content.content[0].content??[];
+    if(before.length!==after.length)return null;
+    let changed=-1;
+    const markKey=node=>serialize(doc([{type:'text',text:'',marks:node.marks}]));
+    for(let i=0;i<before.length;i++){
+      const a=before[i],b=after[i];
+      if(a.type!==b.type||markKey(a)!==markKey(b))return null;
+      if(a.type==='texToken'){if(a.attrs.latex!==b.attrs.latex)return null;}
+      else if(a.type==='text'&&a.text!==b.text){if(changed!==-1)return null;changed=i;}
+    }
+    if(changed<0)return null;
+    const a=Array.from(before[changed].text),b=Array.from(after[changed].text);
+    const spans=parsed.textSpans.get(before[changed]);
+    if(!spans||spans.length!==a.length||!spans.length)return null;
+    let prefix=0,suffix=0;
+    while(prefix<a.length&&prefix<b.length&&a[prefix]===b[prefix])prefix++;
+    while(suffix<a.length-prefix&&suffix<b.length-prefix&&a[a.length-1-suffix]===b[b.length-1-suffix])suffix++;
+    const stop=a.length-suffix;
+    const from=prefix===a.length?spans.at(-1).to:spans[prefix].from;
+    const to=stop===prefix?from:spans[stop-1].to;
+    for(let i=prefix+1;i<stop;i++)if(spans[i-1].to!==spans[i].from)return null;
+    // A gap can contain formatting wrappers invisible in the visual run.
+    // Insertion at such a boundary has no uniquely safe source position.
+    if(stop===prefix&&prefix>0&&prefix<a.length&&spans[prefix-1].to!==from)return null;
+    const patched=source.slice(0,from)+encode(b.slice(prefix,b.length-suffix).join(''))+source.slice(to);
+    const checked=parseFile(patched,{macros}), next=checked.blocks[0];
+    if(checked.blocks.length!==1||next?.kind!==kind||next.from!==0||next.to!==patched.length||
+       !next.rich||serialize(next.rich)!==serialize(content))return null;
+    return patched;
+  }
+
   function editVisual(file, block, content) {
     if (!block.rich) throw new Error('This block is preserved as original LaTeX.');
     const prior = rich(file, block);
     if (!same(tokens(prior), tokens(content))) throw new Error('Edit citation and math expressions in the LaTeX pane.');
     if (serialize(prior) === serialize(content)) return;
     if (serialize(content) === serialize(block.rich)) { file.edits.delete(block.id); return; }
-    const source = block.prefix + serialize(content) + block.suffix;
+    const source = patchText(current(file,block),block.kind,file.macros,content) ??
+      (block.prefix + serialize(content) + block.suffix);
     // Comments are not formatting: prevent wrapping one inside a visual
     // mark, and require reparse to establish a single identical token
     // sequence before accepting an edit. Exact comment bytes survive.

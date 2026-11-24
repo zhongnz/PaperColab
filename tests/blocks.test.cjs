@@ -362,3 +362,27 @@ test('file-local literal macro declarations enable protected, explicitly delimit
   assert.throws(()=>B.editSource(file,p,'Use \\pairname{A} only.'),/Keep one supported/);
   assert.equal(B.parseFile(source.replace('\\begin{document}','\\renewcommand{\\methodname}{Other}\n\\begin{document}'),{root:true}).macros.has('methodname'),false);
 });
+
+test('single text-run edits patch original source spans rather than normalising unchanged whitespace',()=>{
+  const source='Initial  observation.\r\nSecond sentence with \\textbf{bold  words} and $x$.';
+  const file=B.parseFile(source),p=file.blocks[0];
+  const next=clone(p.rich);
+  next.content[0].content.find(n=>n.type==='text'&&n.text.includes('observation')).text=
+    next.content[0].content.find(n=>n.type==='text'&&n.text.includes('observation')).text.replace('observation','measurement');
+  B.editVisual(file,p,next);
+  assert.equal(B.exportText(file),source.replace('observation','measurement'));
+  const second=clone(B.rich(file,p));
+  const bold=second.content[0].content.find(n=>n.type==='text'&&n.marks?.some(m=>m.type==='bold'));
+  bold.text=bold.text.replace('words','terms');
+  B.editVisual(file,p,second);
+  assert.equal(B.exportText(file),source.replace('observation','measurement').replace('words','terms'));
+});
+
+test('text patch maps escaped characters and astral Unicode without rewriting neighbouring source',()=>{
+  const source='A  whale 🐋 and \\% result.';
+  const file=B.parseFile(source),p=file.blocks[0];
+  const next=clone(p.rich);
+  next.content[0].content[0].text=next.content[0].content[0].text.replace('🐋','🐬').replace('%','%');
+  B.editVisual(file,p,next);
+  assert.equal(B.exportText(file),source.replace('🐋','🐬'));
+});
