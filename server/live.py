@@ -73,7 +73,11 @@ class Live:
         own = self.sessions.get(key)
         if not own or own["actor"] != actor["id"] or own["project"] != project:
             raise ServiceError(409, "Presence session expired.")
-        members = {r["id"]: r for r in self.service.project(actor, project)["members"]}
+        # Read only the presence metadata, not the full manuscript, anchors,
+        # object library and release records on every sample.
+        members = {r["id"]: r for r in self.service._rows(
+            """SELECT a.id, a.name, a.kind FROM members m JOIN actors a ON a.id=m.actor_id
+               WHERE m.project_id=? AND a.revoked=0""", (project,))}
         presence = []
         for sid, row in self.sessions.items():
             if row["project"] != project or sid == key:

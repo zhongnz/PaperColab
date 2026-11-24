@@ -60,6 +60,7 @@
         const res=await fetch('/api/projects/'+current.project+'/live',{
           headers:{authorization:'Bearer '+current.token},signal:current.controller.signal
         });
+        if(res.status===401||res.status===403){current.denied=true;throw Error('Live access denied.');}
         if(!res.ok||!res.body)throw Error('Live stream unavailable.');
         const reader=res.body.getReader(),decoder=new TextDecoder();
         let pending='';
@@ -79,13 +80,22 @@
             }else if(event.type==='state'){
               current.latest=event;renderPresence(event.presence);
               await applyLiveRevision();
-            }else if(event.type==='closed')throw Error('Live session closed.');
+            }else if(event.type==='closed'){
+              current.denied=event.status===401||event.status===403||event.status===404;
+              throw Error('Live session closed.');
+            }
           }
         }
       }catch(error){
         if(live===current&&!current.controller.signal.aborted)$('live-status').textContent='Live stream interrupted; using revision polling.';
       }finally{
-        if(live===current){live=null;liveRetry=Date.now()+1500;$('presence-list').replaceChildren();$('live-status').textContent='Reconnecting; revision polling available.';}
+        if(live===current){
+          live=null;liveRetry=Date.now()+1500;$('presence-list').replaceChildren();
+          if(current.denied){
+            $('live-enabled').checked=false;
+            $('live-status').textContent='Live access revoked or unavailable. Local drafts retained.';
+          }else $('live-status').textContent='Reconnecting; revision polling available.';
+        }
       }
     })();
   }
@@ -108,6 +118,8 @@
   }
   function freeze(value) {
     $('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=value;
+    for(const button of $('hosted-views').querySelectorAll('[data-view]'))button.disabled=value;
+    $('file').disabled=value;
     updateTransportControl();
   }
   const normalise = value => value.replace(/\r\n?/g,'\n');
@@ -174,6 +186,7 @@
   }
 
   async function openProject(id) {
+    if(live&&live.project!==id)stopLive();
     const incoming = await api('GET', '/api/projects/' + id);
     detail = incoming;
     updateTransportControl();

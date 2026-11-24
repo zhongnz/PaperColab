@@ -60,7 +60,8 @@ def run(browser, url, service):
         lead=service.actor_by_token("demo-ada")
         bao=service.actor_by_token("demo-bao")
         service.remove_member(lead,project,bao["id"])
-    expect(b.locator("#live-status")).to_contain_text("Reconnecting",timeout=12000)
+    expect(b.locator("#live-status")).to_contain_text("Live access revoked",timeout=12000)
+    expect(b.get_by_role("checkbox",name="Experimental live collaboration")).not_to_be_checked()
     expect(a.locator("#presence-list")).not_to_contain_text("Bao",timeout=12000)
     assert not errors,errors
     a.close();b.close()
