@@ -54,6 +54,21 @@ class PreviewTests(unittest.TestCase):
                     finally:p.slot.release()
                     self.assertEqual(p.handle(project,auth,json.dumps({"root":"estuary/main.tex","engine":"pdflatex","revision":rev+1}).encode())[0],409)
                     self.assertEqual(worker.call_count,1)
+                    worker.side_effect=ValueError("! LaTeX Error: File missing.sty not found.")
+                    failed=p.handle(project,auth,request)[1]
+                    self.assertEqual(failed["status"],"failed")
+                    self.assertEqual(failed["category"],"missing-file")
+                    self.assertIn("dependencies",failed["guidance"])
+                    def advance(archive,root,engine):
+                        with s.lock:
+                            s._touch(project)
+                            s.db.commit()
+                        return {"pdf_b64":"fixture","pdf_sha256":"fixture","pages":[]}
+                    worker.side_effect=advance
+                    older=p.handle(project,auth,request)[1]
+                    self.assertEqual(older["revision"],rev)
+                    self.assertEqual(older["current_revision"],rev+1)
+                    request=json.dumps({"root":"estuary/main.tex","engine":"pdflatex","revision":rev+1}).encode()
                     def revoke(archive,root,engine):
                         with s.lock:s.remove_member(ada,project,s.actor_by_token("demo-bao")["id"])
                         return {"pdf_b64":"fixture","pdf_sha256":"fixture","pages":[]}

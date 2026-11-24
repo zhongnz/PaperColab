@@ -5,12 +5,14 @@
   const demo = [['Ada', 'demo-ada'], ['Bao', 'demo-bao'], ['Iris', 'demo-iris'], ['Quill', 'demo-quill']];
   let token = sessionStorage.getItem('papercolab-token') || '';
   let workspaceView='manuscript';
-  let previewGeneration=0,previewPending=false,previewResult=null,previewUrls=[];
+  let previewGeneration=0,previewPending=false,previewResult=null,previewUrls=[],previewObserved=null;
   function clearPreview(){
-    previewGeneration++;previewPending=false;previewResult=null;
+    previewGeneration++;previewPending=false;previewResult=null;previewObserved=null;
     for(const url of previewUrls)URL.revokeObjectURL(url);
     previewUrls=[];$('preview-pages').replaceChildren();
     $('preview-status').textContent='';$('preview-diagnostic').textContent='';$('preview-diagnostic').hidden=true;
+    $('preview-guidance').textContent='';$('preview-guidance').hidden=true;
+    $('preview-identity').textContent='';$('preview-provenance').hidden=true;$('preview-provenance').open=false;
     $('download-preview').hidden=true;updatePreviewControls();
   }
   function updatePreviewControls(){
@@ -18,7 +20,9 @@
     $('preview-root').disabled=previewPending;$('preview-engine').disabled=previewPending;
     $('clear-preview').disabled=!previewResult&&!previewPending&&!$('preview-status').textContent;
     if(previewResult){
-      const stale=previewResult.revision!==detail?.revision;
+      const stale=previewResult.revision!==detail?.revision||
+        previewResult.revision!==previewResult.current_revision||
+        (previewObserved!==null&&previewObserved!==previewResult.revision);
       $('preview-status').textContent='Saved revision '+previewResult.revision+' · '+previewResult.engine+
         (stale?' · Older than current manuscript':'')+
         (previewResult.status==='failed'?' · Build failed':previewResult.pages.length?' · First '+previewResult.pages.length+' page(s)':' · Raster preview unavailable; PDF download available');
@@ -255,6 +259,7 @@
     const current=live;
     if(!current?.connected||!current.latest||busy||polling||detail?.id!==current.project||token!==current.token)return;
     const revision=current.latest.revision;
+    previewObserved=revision;updatePreviewControls();
     if(revision===detail.revision)return;
     if(recovery){$('sync-state').textContent='Remote revision '+revision+' available. Refresh the server comparison before reconciling.';return;}
     if(dirty){$('sync-state').textContent='Remote revision '+revision+' available. Your local draft is retained; save checks its cell version.';return;}
@@ -1072,6 +1077,7 @@
     try {
       const state=await api('GET','/api/projects/'+id+'/revision');
       if(busy || detail?.id!==id || token!==credential || detail.revision!==revision) return;
+      previewObserved=state.revision;updatePreviewControls();
       if(state.revision!==revision) {
         if(recovery)$('sync-state').textContent='Remote revision '+state.revision+' available. Refresh the server comparison before reconciling.';
         else if(dirty) $('sync-state').textContent='Remote revision '+state.revision+' available. Your local draft is retained; save checks its cell version.';
@@ -1085,6 +1091,7 @@
         }
       }
     } catch(error) {
+      if(detail?.id===id&&token===credential&&(error.status===403||error.status===401))clearPreview();
       $('sync-state').textContent=error.status===403?'Access revoked or unavailable. Local draft retained.':'Sync unavailable. Local draft retained.';
     } finally {polling=false;}
   }
@@ -1328,8 +1335,12 @@
         root:$('preview-root').value,engine:$('preview-engine').value,revision:detail.revision});
       if(generation!==previewGeneration||detail?.id!==project||token!==credential)return;
       previewResult=result;
+      $('preview-identity').textContent='Root: '+result.root+'\nEngine: '+result.engine+'\nRevision: '+result.revision+
+        '\nSource ZIP SHA-256: '+result.source_sha256+(result.pdf_sha256?'\nPDF SHA-256: '+result.pdf_sha256:'');
+      $('preview-provenance').hidden=false;
       if(result.status==='failed'){
         $('preview-diagnostic').textContent=result.diagnostic;$('preview-diagnostic').hidden=false;
+        $('preview-guidance').textContent=result.guidance;$('preview-guidance').hidden=false;
       }else{
         $('download-preview').hidden=false;
         for(const [i,encoded] of result.pages.entries()){

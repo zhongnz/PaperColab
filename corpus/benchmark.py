@@ -28,31 +28,7 @@ def sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def build_diagnostic(text):
-    """Return a fixed diagnostic category, never arbitrary TeX log content."""
-    # Ignore latexmk command echoes and normal TeX engine status lines.
-    # In the previous run "-no-shell-escape" was misclassified as a
-    # shell-escape requirement on all eight failed original builds.
-    lines = [line for line in text.lower().splitlines()
-             if not re.search(r"^\s*(?:running |command line |latexmk: applying rule|restricted \\write18 enabled|\\write18 disabled|entering extended mode)",line)
-             and not re.search(r"^\s*(?:pdflatex|xelatex|lualatex|latexmk)\s",line)]
-    text = "\n".join(lines)
-    patterns = (
-        ("missing-bibliography-data", r"i couldn't open database file|couldn't open style file|bibtex.{0,80}(?:failed|error)|bibliography file .{0,120}(?:not found|missing)|(?:bibtex|biber).{0,100}cannot find"),
-        ("missing-file", r"(?:latex|package .{0,80}) error: file .{0,200}not found|i can't find file|file .{0,200}not found"),
-        ("shell-escape-required", r"(?:requires?|must (?:enable|use)|need(?:s|ed)?) [^\n]{0,80}(?:shell.escape|write18)|(?:shell.escape|write18) [^\n]{0,60}(?:required|not enabled|must be enabled)|(?:minted|pygmentize)[^\n]{0,120}(?:not installed|not found|disabled)"),
-        ("font-or-engine", r"fontspec error|requires.{0,100}(?:xelatex|lualatex)|font .{0,100}not found"),
-        ("undefined-control-sequence", r"undefined control sequence"),
-        ("tex-input-syntax", r"runaway argument|file ended while scanning|extra \\\\endgroup|missing \\} inserted|emergency stop"),
-        ("graphics-format", r"unknown graphics extension|cannot determine size of graphic|error converting .*?\\.(?:eps|pdf)|pdftex error.*?image"),
-        ("resource-or-time-limit", r"exceeded the 120-second limit|capacity exceeded|out of memory|oom killed"),
-        ("unsafe-archive", r"unsafe or conflicting archive path|special file|unsupported archive|exceeds 256 mib"),
-        ("latex-error", r"latex error|package .{0,100} error|fatal error"),
-    )
-    for code, pattern in patterns:
-        if re.search(pattern,text):
-            return code
-    return "unclassified"
+from scripts.build_diagnostics import build_diagnostic
 
 
 class CommandFailure(RuntimeError):

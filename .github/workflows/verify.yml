@@ -55,6 +55,9 @@ jobs:
       - run: python scripts/package.py --zip sample.zip
       - run: docker pull texlive/texlive:TL2025-historic
       - run: python scripts/check_build.py --root estuary/main.tex --pdf checked.pdf sample.zip
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
       - run: python -m pip install playwright==1.56.0
       - name: Test integrated local Docker PDF preview
         run: python tests/preview_browser.py
@@ -71,9 +74,6 @@ jobs:
           grep -F 'Replicate samples.' build/editor-edited.txt
           grep -F 'Revised sampling' build/editor-edited.txt
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '24'
       - name: Fetch the pinned published manuscript
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

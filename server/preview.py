@@ -15,6 +15,7 @@ from pathlib import PurePosixPath
 
 from scripts.check_build import command, clean_log, MIB
 from scripts.build_worker import valid_path, ENGINES
+from scripts.build_diagnostics import explain
 from server.service import ServiceError
 
 MAX_BUNDLE=24*MIB
@@ -124,9 +125,9 @@ class Preview:
                 result=compile_bundle(archive,root,engine)
                 status={"status":"succeeded",**result}
             except ValueError as error:
-                status={"status":"failed","diagnostic":str(error)[:8000]}
+                status={"status":"failed","diagnostic":str(error)[:8000],**explain(str(error))}
             except (OSError,subprocess.SubprocessError,zipfile.BadZipFile):
-                status={"status":"failed","diagnostic":"The isolated build worker could not return a valid result."}
+                status={"status":"failed","diagnostic":"The isolated build worker could not return a valid result.",**explain("")}
             with self.service.lock:
                 current_actor=self._actor(token,project)
                 current=self.service.manuscript_revision(current_actor,project)["revision"]

@@ -114,3 +114,5 @@ multi-tenant execution; downloaded PDFs may contain active content.
 The interactive PDF limit is 16 MiB, raster pages 2 MiB each, at most
 1200 pixels per dimension. Real container/browser CI and permission/
 lock regression tests are added; do not claim verification before they pass.
+
+The preview also exposes the root, compiler, saved revision, source ZIP and PDF hashes, and shared fixed-category diagnostic guidance (the same classifier as the corpus). It labels older results even while local drafts prevent a refresh, and drops them on observed access revocation. The real browser test covers both a successful raster/PDF build and an intentionally missing dependency. No automatic compiler retry, package installation, input rewriting or shell escape. Existing corpus failures still require source-specific investigation.
