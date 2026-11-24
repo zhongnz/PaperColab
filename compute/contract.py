@@ -1,7 +1,6 @@
 """Versioned portable experiment contract; hashes establish identity, not truth."""
 import hashlib
 import json
-import math
 import re
 import uuid
 
@@ -137,6 +136,6 @@ def validate_receipt(receipt, bundle):
         validate_outputs(receipt["outputs"])
         if status != "succeeded" and receipt["outputs"]:
             raise ValueError("Failed executions cannot publish structured outputs.")
-        if status == "succeeded" and extract_outputs(log) != receipt["outputs"]:
+        if status == "succeeded" and digest(extract_outputs(log)) != digest(receipt["outputs"]):
             raise ValueError("Structured outputs do not match the recorded log.")
     return receipt

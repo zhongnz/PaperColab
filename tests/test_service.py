@@ -500,6 +500,10 @@ class ProductTests(unittest.TestCase):
         result=link()
         self.assertEqual(result["output_sha256"],digest(output))
         self.assertEqual(result["status"],"exact")
+        released=s.release(a["ada"],p)
+        _,manifest=s.release_zip(a["bao"],p,released["id"])
+        self.assertEqual(manifest["experiment_output_links"][0]["output_sha256"],digest(output))
+        self.assertEqual(manifest["experiment_output_links"][0]["status"],"exact")
         with self.assertRaises(ServiceError):
             link()
         s.direct_edit(a["bao"],p,block["stableId"],block["version"],block["quote"],
@@ -509,6 +513,7 @@ class ProductTests(unittest.TestCase):
             link()
         self.assertEqual(link(version=block["version"]+1)["status"],"exact")
         self.assertEqual(s.project(a["quill"],p)["experiment_output_links"],[])
+        self.assertEqual(s.release_zip(a["bao"],p,released["id"])[1],manifest)
 
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)

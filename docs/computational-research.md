@@ -89,3 +89,5 @@ ZIP contents are not automatically modified. Historical links are retained.
 The accepted run object continues to store the receipt; review and hashes
 do not independently attest execution or scientific validity. No direct
 Jupyter/Quarto adapter yet: this is a portable contract for future adapters.
+
+Chart previews also expose their exact numeric values in an expandable table. A regression test checks that publication manifests preserve the historical link even after the linked cell changes.

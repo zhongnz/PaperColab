@@ -282,11 +282,12 @@ def exercise(browser, port, width):
             assert bundle["spec"]["code"]["body"]=="print(42)"
             assert bundle["spec"]["datasets"][0]["body"]=="1,2,3"
             output={"name":"results","kind":"table","title":"Fixture results","columns":["value"],"rows":[[42]]}
-            log="42\nPAPERCOLAB_OUTPUT_V1 "+json.dumps(output)+"\n"
+            series={"name":"trend","kind":"series","title":"Fixture trend","x_label":"Epoch","y_label":"Loss","points":[[1,0.9],[2,0.6]]}
+            log="42\n"+"".join("PAPERCOLAB_OUTPUT_V1 "+json.dumps(x)+"\n" for x in (output,series))
             receipt={"format":"papercolab-receipt-v2","experiment_id":bundle["spec"]["id"],
                      "bundle_sha256":bundle["sha256"],"image":image,"runner":"docker-local-v1",
                      "status":"succeeded","exit_code":0,"elapsed_ms":10,
-                     "log":log,"log_sha256":hashlib.sha256(log.encode()).hexdigest(),"outputs":[output]}
+                     "log":log,"log_sha256":hashlib.sha256(log.encode()).hexdigest(),"outputs":[output,series]}
             path=Path(directory)/"receipt.json"
             path.write_text(json.dumps(receipt))
             run.get_by_label("Runner receipt for Fixture experiment").set_input_files(path)
@@ -298,6 +299,9 @@ def exercise(browser, port, width):
             expect(page.locator("#library")).to_contain_text("run · Fixture experiment")
             panel=run.locator('[data-output-name="results"]')
             expect(panel.locator("table")).to_contain_text("42")
+            chart=run.locator('[data-output-name="trend"]')
+            expect(chart.get_by_role("img",name="Fixture trend; Epoch versus Loss")).to_be_visible()
+            expect(chart.locator("polyline")).to_have_count(1)
             panel.get_by_label("Manuscript cell for results").select_option(stable_id)
             panel.get_by_role("button",name="Link output to cell").click()
             expect(panel).to_contain_text("· exact")

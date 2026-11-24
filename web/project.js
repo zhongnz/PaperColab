@@ -555,7 +555,14 @@
       for(const [a,b] of coords){const dot=document.createElementNS(ns,'circle');dot.setAttribute('cx',a);dot.setAttribute('cy',b);dot.setAttribute('r','2.5');dot.setAttribute('fill','#326a99');svg.append(dot);}
       const text=(a,b,value,anchor='start')=>{const node=document.createElementNS(ns,'text');node.setAttribute('x',a);node.setAttribute('y',b);node.setAttribute('font-size','11');node.setAttribute('text-anchor',anchor);node.textContent=value;svg.append(node);};
       text(52,25,String(ymax),'end');text(52,185,String(ymin),'end');text(55,200,String(xmin));text(335,200,String(xmax),'end');text(195,219,output.x_label.slice(0,40),'middle');
-      const label=document.createElement('p');label.textContent=output.y_label+' vs '+output.x_label;section.append(svg,label);
+      const label=document.createElement('p');label.textContent=output.y_label+' vs '+output.x_label;
+      const values=document.createElement('details'),summary=document.createElement('summary');
+      summary.textContent='Exact chart data';values.append(summary);
+      const table=document.createElement('table'),head=table.createTHead().insertRow(),body=table.createTBody();
+      for(const col of [output.x_label,output.y_label]){const th=document.createElement('th');th.textContent=col;head.append(th);}
+      for(const pair of output.points){const row=body.insertRow();for(const value of pair)row.insertCell().textContent=String(value);}
+      const scroll=document.createElement('div');scroll.style.maxHeight='260px';scroll.style.overflow='auto';scroll.append(table);values.append(scroll);
+      section.append(svg,label,values);
     }
     return section;
   }
