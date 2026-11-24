@@ -31,9 +31,11 @@ function manuscriptCoverage(data, root, sources) {
     if (!/\.(?:tex|ltx)$/i.test(source)) continue;
     const text = data.files.get(source)?.text;
     if (typeof text !== 'string') { total.uninspectedSources.push(source); continue; }
-    const report = PaperColabBlocks.coverage(PaperColabBlocks.parseFile(text, { root: source === root }));
+    const parsedFile=PaperColabBlocks.parseFile(text, { root: source === root });
+    const report = PaperColabBlocks.coverage(parsedFile);
     addCoverage(total, report);
     if (report.fullFileFallback) total.fullFileFallbacks.push({source, reason: report.fullFileReason});
+    if(parsedFile.macros.size) (total.literalMacroSignatures??=[]).push({source,signatures:[...parsedFile.macros].map(([name,arity])=>({name,arity}))});
   }
   return total;
 }

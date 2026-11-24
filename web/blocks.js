@@ -41,7 +41,41 @@
     } };
   }
 
-  function asRich(nodes, slice, depth = 0, failures = null) {
+  // File-local registry, deliberately not a TeX expansion engine. Accept
+  // only top-level, complete, literal newcommand declarations in the
+  // preamble of a single document. No cross-file inference.
+  function declaredMacros(ast, env, text) {
+    const registry = new Map();
+    if (!env) return registry;
+    const preamble = text.slice(0, env.position.start.offset);
+    const declarations = new Set(ast.content.filter(n => n.type === 'macro' && n.content === 'newcommand')
+      .map(n => n.position.start.offset));
+    const reserved = new Set([...headingNames, ...standalone, ...inlineRefs, ...opaqueText,
+      ...explicitZeroArg, ...Object.keys(marks), ...Object.keys(namedEscapes), 'label','url',
+      'begin','end','input','include','def','let','newcommand','renewcommand','providecommand','par','item']);
+    const definition = /^[ \t]*\\newcommand\*?\{\\([A-Za-z]{1,40})\}(?:\[([12])\])?\{([A-Za-z0-9 .,:;!?()/'-]*(?:#[12][A-Za-z0-9 .,:;!?()/'-]*)*)\}[ \t]*(?=\r?$)/gm;
+    const seen = new Set();
+    for (const match of preamble.matchAll(definition)) {
+      if (seen.size >= 100) break;
+      const offset = match.index + match[0].indexOf('\\newcommand');
+      const [, name, arityText, replacement] = match, arity = Number(arityText || 0);
+      if (!declarations.has(offset) || reserved.has(name) || /^(?:if|end|begin)/.test(name)) continue;
+      if (seen.has(name)) { registry.delete(name); continue; }
+      seen.add(name);
+      if (!replacement || replacement.length > 300 ||
+          [...replacement.matchAll(/#([12])/g)].some(m => Number(m[1]) > arity) ||
+          Array.from({length:arity},(_,i)=>'#'+(i+1)).some(arg=>!replacement.includes(arg))) continue;
+      // Reject visible redefinitions/aliases of the same name, including
+      // declarations outside the preamble. This is a conservative lexical
+      // check, not proof about package code or dynamic TeX execution.
+      const changes = new RegExp(String.raw`\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|def|gdef|edef|xdef|let|futurelet)\*?\s*(?:\{\s*)?\\` + name + String.raw`(?![A-Za-z@])`, 'g');
+      if ([...text.matchAll(changes)].length !== 1) continue;
+      registry.set(name, arity);
+    }
+    return registry;
+  }
+
+  function asRich(nodes, slice, depth = 0, failures = null, macros = new Map()) {
     const fail = command => {
       if (failures && command) failures.push(command);
       return null;
@@ -91,6 +125,19 @@
       if (name.length === 1 && '#$%&_{}'.includes(name) && raw(node) === '\\' + name) {
         append({ type: 'text', text: name }); continue;
       }
+      if (macros.has(name)) {
+        const arity = macros.get(name);
+        // Zero-argument aliases require an explicit empty delimiter;
+        // one/two-argument aliases require adjacent literal groups.
+        const count = Math.max(1,arity);
+        const args = nodes.slice(i+1,i+1+count);
+        if (args.length !== count || args.some((arg,j) =>
+          arg.type !== 'group' || arg.position.start.offset !== nodes[i+j].position.end.offset ||
+          (arity === 0 ? raw(arg) !== '{}' : !/^\{[A-Za-z0-9 .,:;!?()/'-]{1,200}\}$/.test(raw(arg)))))
+          return fail(name);
+        append({type:'texToken',attrs:{latex:slice(node.position.start.offset,args.at(-1).position.end.offset)}});
+        i += count; continue;
+      }
       // A bounded run of adjacent AST nodes may encode natbib optional
       // notes before the key group. Only literal notes are recognised.
       // Keep the entire expression opaque and byte-exact.
@@ -113,7 +160,7 @@
       if (Object.hasOwn(namedEscapes, name) && !next.content.length) {
         append({ type: 'text', text: namedEscapes[name] });
       } else if (Object.hasOwn(marks, name)) {
-        const children = asRich(next.content, slice, depth + 1, failures);
+        const children = asRich(next.content, slice, depth + 1, failures, macros);
         if (!children?.length) return failures?.length ? null : fail(name);
         for (const child of children) {
           const existing = child.marks ?? [];
@@ -161,7 +208,7 @@
     (n.type === 'macro' && /^(?:begin|end|if.*|else|fi|or|begingroup|endgroup|bgroup|egroup)$/.test(n.content));
   const isSpace = node => node.type === 'whitespace' || node.type === 'parbreak';
 
-  function parseFile(original, { root = false } = {}) {
+  function parseFile(original, { root = false, macros: inheritedMacros = null } = {}) {
     const blocks = [];
     function add(kind, from, to, info = {}) {
       if (from >= to || !original.slice(from, to).trim()) return;
@@ -170,7 +217,7 @@
     const rawFile = reason => {
       blocks.length = 0;
       add('raw', 0, original.length, { label: 'Original source', reason });
-      return { original, blocks, edits: new Map() };
+      return { original, blocks, edits: new Map(), macros: new Map() };
     };
     if (new TextEncoder().encode(original).length > 512 * 1024) return rawFile('This file exceeds the visual editor’s 512 KiB text limit.');
     const { text, at } = coordinates(original);
@@ -182,12 +229,13 @@
     const docs = ast.content.filter(n => n.type === 'environment' && n.env === 'document');
     if (docs.length > 1 || (root && docs.length !== 1)) return rawFile('A single document body could not be identified.');
     const env = docs[0];
+    const macros = env ? declaredMacros(ast,env,text) : inheritedMacros ?? new Map();
     const nodes = env ? env.content : ast.content;
     if (nodes.some(ambiguous)) return rawFile('A conditional or unmatched delimiter makes the block boundaries uncertain.');
     const start = n => at(n.position.start.offset), end = n => at(n.position.end.offset);
     function represent(nodes) {
       const commands = [];
-      const rich = asRich(nodes, slice, 0, commands);
+      const rich = asRich(nodes, slice, 0, commands, macros);
       return { rich, commands: [...new Set(commands)] };
     }
     if (env) add('raw', 0, nodes.length ? start(nodes[0]) : end(env), { label: 'Document opening' });
@@ -241,7 +289,7 @@
     }
     flush();
     if (env && nodes.length) add('raw', end(nodes.at(-1)), original.length, { label: 'Document closing' });
-    return { original, blocks, edits: new Map() };
+    return { original, blocks, edits: new Map(), macros };
   }
 
   function originalBlock(file, block) { return file.original.slice(block.from, block.to); }
@@ -262,14 +310,14 @@
     // Comments are not formatting: prevent wrapping one inside a visual
     // mark, and require reparse to establish a single identical token
     // sequence before accepting an edit. Exact comment bytes survive.
-    if (tokens(content).some(t => /^[ \t]*%/.test(t))) {
+    if (file.macros?.size || tokens(content).some(t => /^[ \t]*%/.test(t))) {
       const marked = (content.content[0].content ?? []).some(n =>
         n.type === 'texToken' && /^[ \t]*%/.test(n.attrs.latex) && n.marks?.length);
-      const parsed = parseFile(source), candidate = parsed.blocks[0];
+      const parsed = parseFile(source,{macros:file.macros}), candidate = parsed.blocks[0];
       if (marked || parsed.blocks.length !== 1 || candidate.kind !== block.kind ||
           candidate.from !== 0 || candidate.to !== source.length || !candidate.rich ||
           !same(tokens(content),tokens(candidate.rich)))
-        throw new Error('Keep protected comments and their line endings intact. Edit complex comments in LaTeX.');
+        throw new Error('Keep protected comments and macro expressions intact. Edit complex expressions in LaTeX.');
     }
     set(file, block, source, content);
   }
@@ -278,7 +326,7 @@
     if (!block.rich) throw new Error('This block is preserved as original LaTeX.');
     if (source === current(file, block)) return;
     if (source === originalBlock(file, block)) { file.edits.delete(block.id); return; }
-    const parsed = parseFile(source);
+    const parsed = parseFile(source,{macros:file.macros});
     const candidate = parsed.blocks[0];
     if (parsed.blocks.length !== 1 || candidate.kind !== block.kind || candidate.from !== 0 ||
         candidate.to !== source.length || (block.kind === 'heading' && candidate.prefix !== block.prefix)) {
@@ -413,6 +461,13 @@
     });
     const i = rows.findIndex(row => row.id === id), row = rows[i];
     if (!row || (!row.rich && !(['scientific','scientific-source'].includes(action) && scientific(row.source)))) throw new Error('Select an editable cell; preserved LaTeX cannot be changed structurally.');
+    // Splitting/merging or converting comment-bearing prose may change
+    // the meaning of the comment's line ending. Keep these explicit
+    // structural actions unavailable until a comment-aware transform.
+    const hasComment = r => r?.rich && tokens(r.rich).some(t=>/^[ \t]*%/.test(t));
+    if (['split','convert'].includes(action)&&hasComment(row) ||
+        action==='merge-next'&&(hasComment(row)||hasComment(rows[i+1])))
+      throw new Error('Keep protected comments intact; this structural operation is not supported.');
     const eol = text.match(/\r\n|\r|\n/)?.[0] ?? '\n', sep = eol + eol;
     let nextId = rows.reduce((n, r) => Math.max(n, r.id + 1), file.nextId ?? 1);
     const fresh = () => nextId++;

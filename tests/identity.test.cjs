@@ -68,3 +68,25 @@ test('visual and source suggestions are the same kind of block replacement', () 
   assert.equal(sourceEdit.blocks[0].stableId, first.blocks[0].stableId);
   assert.match(sourceEdit.text, /^Bao reads/);
 });
+
+test('hosted catalogue and proposal share the file-local macro context',()=>{
+  const source='\\documentclass{article}\n\\newcommand{\\methodname}{Method}\n\\begin{document}\nUse \\methodname{} here.\n\\end{document}';
+  const catalog=B.parseFile(source,{root:true});
+  const listed=I.catalogue(catalog);
+  const cell=listed.blocks.find(b=>b.kind==='paragraph');
+  assert.ok(cell?.rich);
+  const after='Use \\methodname{} there.';
+  const proposal=I.applyEdit(source,listed.blocks,cell.stableId,after,true);
+  assert.ok(proposal.ok,proposal.error);
+  assert.equal(proposal.text,source.replace(cell.quote,after));
+  assert.equal(proposal.blocks.find(b=>b.stableId===cell.stableId).quote,after);
+  const {spawnSync}=require('node:child_process');
+  const direct=spawnSync(process.execPath,['server/blocks.cjs'],{input:JSON.stringify({
+    op:'direct',text:source,root:true,previous:listed.blocks,stableId:cell.stableId,after,mode:'visual'
+  }),encoding:'utf8'});
+  assert.equal(direct.status,0,direct.stderr);
+  const result=JSON.parse(direct.stdout);
+  assert.ok(result.ok,result.error);
+  assert.equal(result.text,proposal.text);
+  assert.equal(result.blocks.find(b=>b.stableId===cell.stableId).quote,after);
+});

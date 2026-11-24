@@ -38,8 +38,8 @@
     return { ok: true, blocks, unresolved: previous.filter(prior => !used.has(prior.stableId)).map(prior => prior.stableId) };
   }
 
-  function oneBlock(source, kind) {
-    const parsed = B().parseFile(source);
+  function oneBlock(source, kind, macros = null) {
+    const parsed = B().parseFile(source,{macros});
     const supported = parsed.blocks.filter(block => block.kind === kind);
     if (parsed.blocks.length !== 1 || supported.length !== 1 || supported[0].from !== 0 || supported[0].to !== source.length) {
       return null;
@@ -51,7 +51,8 @@
     const block = previous.find(item => item.stableId === stableId);
     if (!block) return { ok: false, error: 'Unknown block.' };
     if (after === block.quote) return { ok: false, error: 'The suggestion does not change the block.' };
-    if (!oneBlock(after, block.kind)) {
+    const context=B().parseFile(text,{root});
+    if (!oneBlock(after, block.kind, context.macros)) {
       return { ok: false, error: 'This change needs review. It does not stay one block.', unresolved: [stableId], result: 'needs-review' };
     }
     const nextText = text.slice(0, block.from) + after + text.slice(block.to);

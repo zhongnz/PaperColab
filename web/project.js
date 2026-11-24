@@ -27,7 +27,7 @@
   }
   let me, projects = [], detail, fileText = '', selected, visual, source, draft = null, sourceDraft = '';
   let dirty = false, busy = false, polling = false, sourceDirty = false;
-  let viewMode='focused', cellViews=new Map(), multiDrafts=new Map(), fileRevision=null;
+  let viewMode='focused', cellViews=new Map(), multiDrafts=new Map(), fileRevision=null, fileMacros=new Map();
   const B=PaperColabBlocks, E=PaperColabEditors;
   const isMulti=()=>viewMode!=='focused';
   let crdtModule=null;
@@ -758,6 +758,7 @@
   async function showFile(path) {
     const payload = await api('GET', '/api/projects/' + detail.id + '/file?path=' + encodeURIComponent(path));
     fileText = payload.text;fileRevision=payload.revision;
+    fileMacros=B.parseFile(fileText,{root:Boolean(detail.files.find(f=>f.path===path)?.is_root)}).macros;
     // Text and catalogue come from one server-side snapshot.
     detail.blocks=detail.blocks.filter(b=>b.path!==path).concat(payload.blocks);
     const host = $('blocks');
@@ -836,7 +837,7 @@
     }
     function renderContent(value) {
       editor?.destroy();editor=null;fields=null;content.replaceChildren();
-      const parsed=B.parseFile(value), local=parsed.blocks[0];
+      const parsed=B.parseFile(value,{macros:fileMacros}), local=parsed.blocks[0];
       if(base.rich&&local?.rich) {
         editor=E.visual(content,B.rich(parsed,local),{
           onChange(json){
@@ -875,7 +876,7 @@
       const next=area.value.replace(/\n/g,eol);
       try {
         if(base.rich) {
-          const parsed=B.parseFile(base.quote);B.editSource(parsed,parsed.blocks[0],next);
+          const parsed=B.parseFile(base.quote,{macros:fileMacros});B.editSource(parsed,parsed.blocks[0],next);
         } else if(!model||B.scientific(next)?.type!==model.type) throw new Error('Keep the same supported scientific cell type.');
         mode='source';renderContent(next);changed(next,'source');apply.disabled=true;
       } catch(error){changed(next,'source',error.message);}
@@ -1107,7 +1108,7 @@
       $('delegated-token').value='';$('delegated-credential').hidden=true;$('delegate-instructions').value='';
       for(const key of ['experiment-title','experiment-objective','experiment-image','object-body'])$(key).value='';
       for(const key of ['workflow-title','workflow-objective','workflow-step-title','workflow-instructions','workflow-criteria'])$(key).value='';
-      destroyEditors(); detail=null; selected=null; fileText='';
+      destroyEditors(); detail=null; selected=null; fileText='';fileMacros=new Map();
       $('crdt-enabled').checked=false;updateTransportControl();
       $('open').hidden=true;$('workspace-welcome').hidden=false;
       for(const id of ['project-title','readiness','members','releases','blocks','queue','agent-task-list','workflow-list','experiment-list','library','links','decisions','audit','cost-out','review-count','sync-state','block-label','delegated-task-id','file','delegate-cell','delegate-assistant','delegate-context','workflow-select','workflow-cell','workflow-assistant','workflow-context','workflow-dependencies','experiment-code','experiment-datasets','evidence'])$(id).replaceChildren();

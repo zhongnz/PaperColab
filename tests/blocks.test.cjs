@@ -306,8 +306,8 @@ test('literal optional citation notes and simple opaque inline text retain exact
 
 test('bounded inline comments preserve exact line endings and never become plain text', () => {
   for (const newline of ['\n','\r\n']) {
-    const comment='% reviewer note  '+newline;
-    const source='First sentence. '+comment+'Second sentence.';
+    const comment=' % reviewer note  '+newline;
+    const source='First sentence.'+comment+'Second sentence.';
     const file=B.parseFile(source), p=file.blocks[0];
     assert.equal(p.kind,'paragraph');
     assert.deepEqual(B.tokens(p.rich),[comment]);
@@ -333,4 +333,32 @@ test('explicitly delimited zero-argument standard macros are preserved; unknown 
   B.editVisual(f,p,append(p.rich,' Done.'));
   assert.equal(B.exportText(f),source+' Done.');
   assert.equal(B.parseFile('Use \\custom{} here.').blocks[0].kind,'raw');
+});
+
+test('file-local literal macro declarations enable protected, explicitly delimited invocations',()=>{
+  const source=[
+    '\\documentclass{article}',
+    '\\newcommand{\\methodname}{Research method}',
+    '\\newcommand{\\pairname}[2]{#1 and #2}',
+    '\\newcommand{\\unsafe}[1]{\\input{#1}}',
+    '\\begin{document}',
+    'Use \\methodname{} with \\pairname{A}{B} here.',
+    '',
+    'Unknown \\unsafe{a}.',
+    '\\end{document}'
+  ].join('\n');
+  const file=B.parseFile(source,{root:true});
+  assert.deepEqual([...file.macros],[['methodname',0],['pairname',2]]);
+  const p=file.blocks.find(x=>x.rich&&x.kind==='paragraph');
+  assert.deepEqual(B.tokens(p.rich),['\\methodname{}','\\pairname{A}{B}']);
+  assert.equal(B.exportText(file),source);
+  const quote=B.current(file,p);
+  assert.equal(B.parseFile(quote).blocks[0].kind,'raw');
+  assert.deepEqual(B.tokens(B.parseFile(quote,{macros:file.macros}).blocks[0].rich),B.tokens(p.rich));
+  B.editVisual(file,p,append(p.rich,' Done.'));
+  assert.equal(B.exportText(file),source.slice(0,p.to)+' Done.'+source.slice(p.to));
+  B.editSource(file,p,quote.replace('{A}{B}','{C}{D}'));
+  assert.deepEqual(B.tokens(B.rich(file,p)),['\\methodname{}','\\pairname{C}{D}']);
+  assert.throws(()=>B.editSource(file,p,'Use \\pairname{A} only.'),/Keep one supported/);
+  assert.equal(B.parseFile(source.replace('\\begin{document}','\\renewcommand{\\methodname}{Other}\n\\begin{document}'),{root:true}).macros.has('methodname'),false);
 });
