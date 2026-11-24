@@ -129,9 +129,12 @@ def exercise(browser, port, width):
         table=cells.locator(".scientific-panel").filter(has=page.locator("table")).first
         expect(table.get_by_role("textbox",name="Row 2, column 2",exact=True)).to_have_value("4")
         table.get_by_role("textbox",name="Row 2, column 2",exact=True).fill("8")
-        cells.locator(".manuscript-cell").filter(has=table).get_by_role("button",name="Save cell",exact=True).click()
+        table_cell=cells.locator(".manuscript-cell").filter(has=page.locator(".scientific-panel table")).first
+        table_cell.get_by_role("button",name="Save cell",exact=True).click()
+        expect(page.locator("#hosted-draft-count")).to_have_text("0 unsaved cells")
         expect(table.get_by_role("textbox",name="Row 2, column 2",exact=True)).to_have_value("8")
         page.get_by_role("button", name="Focused", exact=True).click()
+        expect(page.locator("#focused-cell")).to_be_visible()
     page.close()
     assert not errors, errors
 
