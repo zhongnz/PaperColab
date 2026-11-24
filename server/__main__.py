@@ -161,9 +161,9 @@ def main():
     if crdt and host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("Experimental collaboration is loopback-only.")
     service = Service(data / "papercolab.sqlite", demo=demo, crdt=crdt)
-    if not demo and service.has_demo_accounts():
+    if service.db.execute("SELECT 1 FROM actors").fetchone() and demo != service.has_demo_accounts():
         service.close()
-        raise SystemExit("Use a new PAPERCOLAB_DATA directory for non-demo accounts; demo databases are not private workspaces.")
+        raise SystemExit("Use separate PAPERCOLAB_DATA directories for demo and non-demo accounts.")
     if not demo and not service.db.execute("SELECT id FROM actors").fetchone():
         token = __import__("secrets").token_urlsafe(24)
         service._insert_actor("Operator", "human", token, "operator")

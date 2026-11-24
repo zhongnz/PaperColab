@@ -73,6 +73,18 @@ def run(browser,url,operator_token):
     assert collaborator.evaluate("sessionStorage.getItem('papercolab-token')") is None
     collaborator.reload()
     expect(collaborator.locator("#who")).to_have_text("Signed out")
+    operator.on("dialog",lambda dialog:dialog.accept())
+    operator.get_by_role("button",name="Manage local accounts").click()
+    operator.get_by_role("button",name="Rotate credential for Pilot collaborator").click()
+    expect(operator.locator("#provision-result")).to_be_visible()
+    rotated=operator.locator("#provision-token").input_value()
+    assert rotated and rotated!=credential
+    assert collaborator.request.get(url+"/api/me",headers={"Authorization":"Bearer "+credential}).status==401
+    sign_in(collaborator,rotated,"Pilot collaborator")
+    expect(collaborator.locator("#project-list")).to_contain_text("Estuary field notes")
+    operator.get_by_role("button",name="Revoke account for Pilot collaborator").click()
+    expect(operator.locator("#account-list")).to_contain_text("Pilot collaborator · human · revoked")
+    assert collaborator.request.get(url+"/api/me",headers={"Authorization":"Bearer "+rotated}).status==403
     assert not errors,errors
     operator.close();collaborator.close()
 

@@ -838,7 +838,7 @@ class Service:
                 status = "blocked"
             elif not last:
                 status = "ready"
-            elif last["outcome"] == "revise" or last["task_status"] in {"cancelled","expired","rejected","stale","unavailable","needs-review"}:
+            elif last["outcome"] == "revise" or last["task_status"] in {"cancelled","expired","rejected","stale","unavailable","needs-review","revoked"}:
                 status = "retry"
             elif last["task_status"] == "accepted":
                 status = "evaluation"
@@ -1163,6 +1163,16 @@ class Service:
         if suggestion["status"] != "pending":
             raise ServiceError(409, "This suggestion is " + suggestion["status"] + ".")
         task = self.db.execute("SELECT * FROM agent_tasks WHERE suggestion_id=?", (suggestion_id,)).fetchone()
+        if not task:
+            try:
+                author=self.db.execute("SELECT * FROM actors WHERE id=?",(suggestion["actor_id"],)).fetchone()
+                if not author:
+                    raise ServiceError(403,"Contributor is unavailable.")
+                self.require(self._actor(author),project_id,"propose")
+            except ServiceError:
+                with self.db:
+                    self._set_suggestion(suggestion_id,"revoked","revoked",actor["id"])
+                raise ServiceError(409,"Contributor no longer has proposal authority.")
         if task:
             try:
                 if task["status"] != "submitted":
@@ -1559,7 +1569,7 @@ class Service:
         check = sqlite3.connect(name)
         try:
             check.execute("SELECT allow_ai FROM policy").fetchone()
-            if not self.demo:
+            if not self.has_demo_accounts():
                 # Local restore must not roll back identity or authority.
                 # Reject older/different account or membership snapshots.
                 # A disaster-recovery identity migration is a separate task.
@@ -1571,16 +1581,13 @@ class Service:
                     if restored!=current:
                         raise ServiceError(409, "Backup account or membership state differs. Restore would roll back authority.")
         except (sqlite3.Error, ServiceError) as error:
-            Path(name).unlink(missing_ok=True) if os.name!="nt" else None
+            check.close()
+            Path(name).unlink(missing_ok=True)
             if isinstance(error,ServiceError):
                 raise
             raise ServiceError(400, "That backup is not a PaperColab database.") from error
-        finally:
+        else:
             check.close()
-            # On failure the temporary copy must not persist.
-            import sys
-            if sys.exc_info()[0] is not None:
-                Path(name).unlink(missing_ok=True)
         self.db.close()
         shutil.copyfile(name, self.path)
         Path(name).unlink(missing_ok=True)

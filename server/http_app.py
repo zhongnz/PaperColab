@@ -55,7 +55,7 @@ class Api:
             return 405, {"error": "Method not allowed."}
         except Exception as error:
             status = getattr(error, "status", None) or 500
-            if status == 500 and not getattr(error, "status", None):
+            if status == 500:
                 return 500, {"error": "The request failed. Contact the local operator."}
             return status, {"error": str(error)}
 

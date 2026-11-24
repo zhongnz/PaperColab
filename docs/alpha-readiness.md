@@ -68,3 +68,5 @@ snapshot, preventing rollback of rotated/revoked credentials or membership.
 This conservative restriction prevents some legitimate disaster recovery;
 operator credential recovery and offline recovery procedures remain open.
 No password authentication, MFA, OIDC, session expiry, TLS or deployment yet.
+
+The onboarding regression also exercises rotation and revocation through the operator UI. The service rechecks ordinary proposal contributor authority at acceptance, and invalidated delegated tasks cannot be revived by re-adding a removed member. Old backups are rejected by the local restore API when identity or membership differs; this is not a complete disaster-recovery solution.

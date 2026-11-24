@@ -352,7 +352,11 @@ class ProductTests(unittest.TestCase):
         s.remove_member(a["ada"],p,a["quill"]["id"])
         with self.assertRaises(ServiceError) as err:
             submit(fourth)
-        self.assertEqual(err.exception.status,403)
+        self.assertEqual(err.exception.status,401)
+        s.add_member(a["ada"],p,a["quill"]["id"],"author")
+        with self.assertRaises(ServiceError) as err:
+            submit(fourth)
+        self.assertEqual(err.exception.status,401)
         self.assertEqual(paragraph(s,a["bao"],p)["quote"],block["quote"])
 
     def test_research_workflow_dependencies_evaluation_and_retry(self):
