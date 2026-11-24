@@ -184,6 +184,10 @@ class Api:
             return self.service.restore(actor, raw)
         if bits[:3] == ["api", "admin", "purge"] and method == "POST":
             return self.service.purge(actor)
+        if bits == ["api", "admin", "actors"] and method == "GET":
+            return self.service.list_accounts(actor)
+        if len(bits) == 5 and bits[:3] == ["api", "admin", "actors"] and bits[4] == "rotate" and method == "POST":
+            return self.service.rotate_actor(actor,bits[3])
         if bits[:3] == ["api", "admin", "actors"] and method == "POST" and len(bits) == 3:
             created = self.service.create_actor(actor, data.get("name") or "", data.get("kind") or "human")
             return created

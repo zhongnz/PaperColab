@@ -1115,7 +1115,7 @@
       $('cost-out').hidden=true;
       $('project-list').replaceChildren();$('search-results').replaceChildren();
       $('project-create-tools').hidden=$('project-search-tools').hidden=$('provision-panel').hidden=true;
-      clearProvision();me=null;projects=[];
+      clearProvision();$('account-list').replaceChildren();me=null;projects=[];
       $('who').textContent='Signed out';
       $('welcome-message').textContent='Sign in with your local access token to get started.';
       token=next;$('token').value='';$('actor').value=token;
@@ -1136,6 +1136,36 @@
     $('provision-result').hidden=false;$('account-name').value='';
     say('Account created. Copy its credential securely before clearing it.');
   });
+  async function showAccounts(){
+    const accounts=await api('GET','/api/admin/actors');
+    const host=$('account-list');host.replaceChildren();
+    for(const account of accounts){
+      const row=document.createElement('div'),name=document.createElement('p');
+      name.textContent=account.name+' · '+account.kind+(account.revoked?' · revoked':'');
+      row.append(name);
+      const id=document.createElement('code');id.textContent=account.id;row.append(id);
+      if(!account.revoked&&account.workspace_role!=='operator'){
+        for(const [action,label] of [['rotate','Rotate credential'],['revoke','Revoke account']]){
+          const button=document.createElement('button');button.type='button';button.textContent=label;
+          button.setAttribute('aria-label',label+' for '+account.name);
+          button.onclick=()=>act(async()=>{
+            if(!window.confirm(label+' for '+account.name+'? Existing credentials and pending contributions will be invalidated.'))return;
+            clearProvision();
+            const result=await api('POST','/api/admin/actors/'+account.id+'/'+action);
+            await showAccounts();
+            if(result.token){
+              $('provision-id').value=result.id;$('provision-token').value=result.token;$('provision-result').hidden=false;
+            }
+            if(detail)await openProject(detail.id);
+            say(action==='rotate'?'New credential issued. Copy it securely.':'Account revoked.');
+          });
+          row.append(button);
+        }
+      }
+      host.append(row);
+    }
+  }
+  $('list-accounts').onclick=()=>act(showAccounts);
   $('show-provision-token').onchange=()=>{$('provision-token').type=$('show-provision-token').checked?'text':'password';};
   $('hide-provision').onclick=clearProvision;
   $('add-member').onclick=()=>act(async()=>{

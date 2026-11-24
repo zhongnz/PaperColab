@@ -33,6 +33,10 @@ DEMO_ACTORS = (
 TEXT_SUFFIXES = {".tex", ".ltx", ".cls", ".sty", ".bib", ".json", ".md", ".txt", ".csv"}
 
 
+def token_digest(token):
+    return "sha256:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 class ServiceError(Exception):
     def __init__(self, status, message):
         self.status = status
@@ -50,6 +54,7 @@ class Service:
         self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
+        self.db.execute("PRAGMA secure_delete = ON")
         self._schema()
         if demo and not self._rows("SELECT id FROM actors"):
             self._seed_demo()
@@ -154,6 +159,18 @@ class Service:
         if "version" not in {row["name"] for row in self._rows("PRAGMA table_info(blocks)")}:
             self.db.execute("ALTER TABLE blocks ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
             self.db.commit()
+        # Migrate the existing token column in-place. New random bearer
+        # credentials are stored as digests, never recoverable plaintext.
+        # secure_delete and VACUUM reduce residual SQLite page copies; they
+        # cannot erase filesystem snapshots or previously exported backups.
+        legacy = [row for row in self._rows("SELECT id,token FROM actors")
+                  if not re.fullmatch(r"sha256:[0-9a-f]{64}", row["token"])]
+        if legacy:
+            with self.db:
+                for row in legacy:
+                    self.db.execute("UPDATE actors SET token=? WHERE id=?",
+                                    (token_digest(row["token"]), row["id"]))
+            self.db.execute("VACUUM")
         if not self._rows("SELECT id FROM policy"):
             self.db.execute("INSERT INTO policy (id, allow_ai, retention_days) VALUES (1, 1, 0)")
             self.db.commit()
@@ -175,7 +192,7 @@ class Service:
         actor_id = str(uuid.uuid4())
         self.db.execute(
             "INSERT INTO actors (id, name, kind, token, workspace_role, revoked, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
-            (actor_id, name, kind, token, workspace_role, self.now()))
+            (actor_id, name, kind, token_digest(token), workspace_role, self.now()))
         return actor_id
 
     def _create_project_row(self, title):
@@ -186,9 +203,9 @@ class Service:
         return project_id
 
     def actor_by_token(self, token):
-        if not token:
+        if not isinstance(token,str) or not token or len(token)>256:
             raise ServiceError(401, "Sign in with a bearer token.")
-        row = self.db.execute("SELECT * FROM actors WHERE token = ?", (token,)).fetchone()
+        row = self.db.execute("SELECT * FROM actors WHERE token = ?", (token_digest(token),)).fetchone()
         if not row:
             raise ServiceError(401, "Unknown token.")
         return self._actor(row)
@@ -273,15 +290,52 @@ class Service:
         self.db.commit()
         return {"id": actor_id, "name": name, "kind": kind, "token": token}
 
+    def has_demo_accounts(self):
+        return any(self.db.execute("SELECT 1 FROM actors WHERE token=?", (token_digest(item[2]),)).fetchone()
+                   for item in DEMO_ACTORS)
+
+    def list_accounts(self, actor):
+        self.require(actor, None, "create_actor")
+        return [self._actor(row) for row in self._rows("SELECT * FROM actors ORDER BY name,id")]
+
+    def rotate_actor(self, actor, actor_id):
+        self.require(actor, None, "create_actor")
+        target = self.db.execute("SELECT * FROM actors WHERE id=?", (actor_id,)).fetchone()
+        if not target or target["revoked"]:
+            raise ServiceError(404, "Unknown active account.")
+        if actor_id == actor["id"] or target["workspace_role"] == "operator":
+            raise ServiceError(409, "Operator credential rotation requires a separate recovery procedure.")
+        if any(target["token"] == token_digest(item[2]) for item in DEMO_ACTORS):
+            raise ServiceError(409, "Fixed demo credentials cannot be rotated.")
+        secret = secrets.token_urlsafe(24)
+        with self.db:
+            self.db.execute("UPDATE actors SET token=? WHERE id=?", (token_digest(secret), actor_id))
+            # Rotation also invalidates delegated capabilities for this
+            # assistant. Already accepted contributions remain historical.
+            self._invalidate_authority(actor_id)
+            self._audit(actor["id"], "rotate-actor", None, {"actor":actor_id})
+        return {**self._actor(target), "token":secret}
+
+    def _invalidate_authority(self, actor_id, project_id=None):
+        clause = " AND project_id=?" if project_id is not None else ""
+        args = (actor_id,project_id) if project_id is not None else (actor_id,)
+        self.db.execute("UPDATE suggestions SET status='revoked',result='revoked' WHERE actor_id=? AND status='pending'"+clause,args)
+        self.db.execute("""UPDATE agent_tasks SET status='cancelled',token_hash=''
+                           WHERE assignee_id=? AND status='open'"""+clause,args)
+
     def revoke_actor(self, actor, actor_id):
         self.require(actor, None, "revoke")
         target = self.db.execute("SELECT * FROM actors WHERE id = ?", (actor_id,)).fetchone()
         if not target:
             raise ServiceError(404, "Unknown actor.")
-        self.db.execute("UPDATE actors SET revoked = 1 WHERE id = ?", (actor_id,))
-        self.db.execute("UPDATE suggestions SET status = 'revoked', result = 'revoked' WHERE actor_id = ? AND status = 'pending'", (actor_id,))
-        self._audit(actor["id"], "revoke", None, {"actor": actor_id})
-        self.db.commit()
+        if actor_id == actor["id"] or target["workspace_role"] == "operator":
+            raise ServiceError(409, "Cannot revoke an operator through this endpoint.")
+        for membership in self._rows("SELECT project_id FROM members WHERE actor_id=? AND role='lead'", (actor_id,)):
+            self._require_other_lead(membership["project_id"], actor_id)
+        with self.db:
+            self.db.execute("UPDATE actors SET revoked = 1 WHERE id = ?", (actor_id,))
+            self._invalidate_authority(actor_id)
+            self._audit(actor["id"], "revoke", None, {"actor": actor_id})
         return {"id": actor_id, "revoked": True}
 
     def create_project(self, actor, title, example=False):
@@ -298,24 +352,41 @@ class Service:
             self.import_example(actor, project_id)
         return self.project(actor, project_id)
 
+    def _require_other_lead(self, project_id, actor_id):
+        if self.db.execute("""SELECT 1 FROM members m JOIN actors a ON a.id=m.actor_id
+                              WHERE m.project_id=? AND m.actor_id<>? AND m.role='lead'
+                              AND a.kind='human' AND a.revoked=0""",(project_id,actor_id)).fetchone() is None:
+            raise ServiceError(409, "Assign another active human lead first.")
+
     def add_member(self, actor, project_id, actor_id, role):
         self.require(actor, project_id, "members")
         if role not in {"reader", "reviewer", "author", "lead"}:
             raise ServiceError(400, "Unknown project role.")
-        target = self.db.execute("SELECT id, revoked FROM actors WHERE id = ?", (actor_id,)).fetchone()
+        target = self.db.execute("SELECT id, revoked, kind FROM actors WHERE id = ?", (actor_id,)).fetchone()
         if not target or target["revoked"]:
             raise ServiceError(404, "Unknown actor.")
-        self.db.execute("INSERT INTO members (project_id, actor_id, role) VALUES (?, ?, ?) ON CONFLICT(project_id, actor_id) DO UPDATE SET role = excluded.role",
-                        (project_id, actor_id, role))
-        self._audit(actor["id"], "member", project_id, {"actor": actor_id, "role": role})
-        self.db.commit()
+        if target["kind"]=="assistant" and role not in {"reader","author"}:
+            raise ServiceError(400, "Assistants can be readers or authors only.")
+        prior=self.db.execute("SELECT role FROM members WHERE project_id=? AND actor_id=?",(project_id,actor_id)).fetchone()
+        if prior and prior["role"]=="lead" and role!="lead":
+            self._require_other_lead(project_id,actor_id)
+        with self.db:
+            self.db.execute("INSERT INTO members (project_id, actor_id, role) VALUES (?, ?, ?) ON CONFLICT(project_id, actor_id) DO UPDATE SET role = excluded.role",
+                            (project_id, actor_id, role))
+            if prior and prior["role"] in {"author","lead"} and role not in {"author","lead"}:
+                self._invalidate_authority(actor_id,project_id)
+            self._audit(actor["id"], "member", project_id, {"actor": actor_id, "role": role})
         return {"actor_id": actor_id, "role": role}
 
     def remove_member(self, actor, project_id, actor_id):
         self.require(actor, project_id, "members")
-        self.db.execute("DELETE FROM members WHERE project_id = ? AND actor_id = ?", (project_id, actor_id))
-        self._audit(actor["id"], "remove-member", project_id, {"actor": actor_id})
-        self.db.commit()
+        prior=self.db.execute("SELECT role FROM members WHERE project_id=? AND actor_id=?",(project_id,actor_id)).fetchone()
+        if prior and prior["role"]=="lead":
+            self._require_other_lead(project_id,actor_id)
+        with self.db:
+            self.db.execute("DELETE FROM members WHERE project_id = ? AND actor_id = ?", (project_id, actor_id))
+            self._invalidate_authority(actor_id,project_id)
+            self._audit(actor["id"], "remove-member", project_id, {"actor": actor_id})
         return {"removed": actor_id}
 
     def projects(self, actor):
@@ -366,7 +437,7 @@ class Service:
                 "revision": self.manuscript_revision(actor, project_id)["revision"]}
 
     def import_example(self, actor, project_id):
-        self.require(actor, project_id, "propose")
+        self.require(actor, project_id, "direct")
         files = []
         for path in sorted(EXAMPLE.rglob("*")):
             if path.is_file():
@@ -374,7 +445,7 @@ class Service:
         return self.import_files(actor, project_id, files)
 
     def import_zip(self, actor, project_id, blob):
-        self.require(actor, project_id, "propose")
+        self.require(actor, project_id, "direct")
         import sys
         sys.path.insert(0, str(ROOT / "scripts"))
         from build_worker import unpack
@@ -387,22 +458,18 @@ class Service:
         return self.import_files(actor, project_id, files)
 
     def import_files(self, actor, project_id, files):
-        self.require(actor, project_id, "propose")
+        self.require(actor, project_id, "direct")
         if not files:
             raise ServiceError(400, "The import is empty.")
         if len(files) > 4000:
             raise ServiceError(400, "The import has more than 4,000 files.")
-        self.db.execute("DELETE FROM crdt_cells WHERE project_id = ?", (project_id,))
-        self.db.execute("DELETE FROM blocks WHERE project_id = ?", (project_id,))
-        self.db.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
-        self.db.execute("""DELETE FROM object_versions WHERE object_id IN
-                           (SELECT id FROM objects WHERE project_id = ? AND kind = 'source' AND external LIKE '%"system": "bibtex"%')""", (project_id,))
-        self.db.execute("DELETE FROM objects WHERE project_id = ? AND kind = 'source' AND external LIKE '%\"system\": \"bibtex\"%'", (project_id,))
-        for path, data in files:
-            self._store_file(actor, project_id, path, data)
-        self._touch(project_id)
-        self._audit(actor["id"], "import", project_id, {"files": len(files)})
-        self.db.commit()
+        if self.db.execute("SELECT 1 FROM files WHERE project_id=? LIMIT 1",(project_id,)).fetchone():
+            raise ServiceError(409, "Import into a new empty project. Existing manuscript identities cannot be overwritten.")
+        with self.db:
+            for path, data in files:
+                self._store_file(actor, project_id, path, data)
+            self._touch(project_id)
+            self._audit(actor["id"], "import", project_id, {"files": len(files)})
         return self.project(actor, project_id)
 
     def _store_file(self, actor, project_id, path, data):
@@ -1492,16 +1559,35 @@ class Service:
         check = sqlite3.connect(name)
         try:
             check.execute("SELECT allow_ai FROM policy").fetchone()
-        except sqlite3.Error as error:
-            check.close()
-            Path(name).unlink(missing_ok=True)
+            if not self.demo:
+                # Local restore must not roll back identity or authority.
+                # Reject older/different account or membership snapshots.
+                # A disaster-recovery identity migration is a separate task.
+                for table, columns in (("actors","id,name,kind,token,workspace_role,revoked"),
+                                       ("members","project_id,actor_id,role")):
+                    sql="SELECT "+columns+" FROM "+table+" ORDER BY "+columns
+                    restored=[tuple(row) for row in check.execute(sql)]
+                    current=[tuple(row) for row in self.db.execute(sql)]
+                    if restored!=current:
+                        raise ServiceError(409, "Backup account or membership state differs. Restore would roll back authority.")
+        except (sqlite3.Error, ServiceError) as error:
+            Path(name).unlink(missing_ok=True) if os.name!="nt" else None
+            if isinstance(error,ServiceError):
+                raise
             raise ServiceError(400, "That backup is not a PaperColab database.") from error
-        check.close()
+        finally:
+            check.close()
+            # On failure the temporary copy must not persist.
+            import sys
+            if sys.exc_info()[0] is not None:
+                Path(name).unlink(missing_ok=True)
         self.db.close()
         shutil.copyfile(name, self.path)
         Path(name).unlink(missing_ok=True)
         self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA foreign_keys = ON")
+        self.db.execute("PRAGMA secure_delete = ON")
         self._schema()
         self.db.execute("DELETE FROM crdt_cells")
         self.db.execute("""UPDATE suggestions SET status='stale',result='restored-task'

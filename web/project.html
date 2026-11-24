@@ -52,6 +52,8 @@
       <label for="account-name">Name</label><input id="account-name" maxlength="120">
       <label for="account-kind">Account kind</label><select id="account-kind"><option value="human">Human</option><option value="assistant">Assistant</option></select>
       <button type="button" class="secondary" id="provision-account">Create local account</button>
+      <button type="button" id="list-accounts">Manage local accounts</button>
+      <div id="account-list"></div>
       <div id="provision-result" hidden>
         <label for="provision-id">Account ID (for project membership)</label><input id="provision-id" readonly>
         <label for="provision-token">Access token (shown once)</label><input id="provision-token" readonly type="password" autocomplete="off">

@@ -515,6 +515,77 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(s.project(a["quill"],p)["experiment_output_links"],[])
         self.assertEqual(s.release_zip(a["bao"],p,released["id"])[1],manifest)
 
+    def test_credential_hash_migration_rotation_and_authority(self):
+        import sqlite3
+        from server.service import token_digest
+        s,p,a=self.service,self.project,self.actors
+        account=s.create_actor(a["ada"],"Credential fixture","human")
+        key,secret=account["id"],account["token"]
+        stored=s.db.execute("SELECT token FROM actors WHERE id=?",(key,)).fetchone()[0]
+        self.assertEqual(stored,token_digest(secret))
+        with self.assertRaises(ServiceError):
+            s.actor_by_token(stored)
+        s.add_member(a["ada"],p,key,"author")
+        s.db.execute("UPDATE actors SET token=? WHERE id=?",(secret,key))
+        s.db.commit()
+        path=s.path
+        s.close();self.service=Service(path)
+        s=self.service
+        self.assertEqual(s.actor_by_token(secret)["id"],key)
+        self.assertEqual(s.db.execute("SELECT token FROM actors WHERE id=?",(key,)).fetchone()[0],stored)
+        rotated=s.rotate_actor(a["ada"],key)
+        with self.assertRaises(ServiceError):
+            s.actor_by_token(secret)
+        self.assertEqual(s.actor_by_token(rotated["token"])["id"],key)
+        self.assertNotIn(rotated["token"],json.dumps(s.list_accounts(a["ada"])))
+        with self.assertRaises(ServiceError):
+            s.rotate_actor(a["bao"],key)
+        with self.assertRaises(ServiceError):
+            s.remove_member(a["ada"],p,a["ada"]["id"])
+        with self.assertRaises(ServiceError):
+            s.add_member(a["ada"],p,a["ada"]["id"],"reader")
+        with self.assertRaises(ServiceError):
+            s.add_member(a["ada"],p,a["quill"]["id"],"lead")
+        with self.assertRaises(ServiceError):
+            s.import_example(a["quill"],p)
+        with self.assertRaises(ServiceError):
+            s.import_example(a["ada"],p)
+        s.revoke_actor(a["ada"],key)
+        self.assertTrue(s.actor_by_token(rotated["token"])["revoked"])
+        code,_=Api(s).handle("GET","/api/me",{"authorization":"Bearer "+rotated["token"]},b"")
+        self.assertEqual(code,403)
+
+    def test_non_demo_restore_cannot_resurrect_credentials(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            s=Service(Path(tmp)/"private.sqlite")
+            try:
+                operator_id=s._insert_actor("Operator","human","test-operator-credential","operator")
+                s.db.commit()
+                operator=s.actor_by_token("test-operator-credential")
+                account=s.create_actor(operator,"Collaborator","human")
+                project=s.create_project(operator,"Private")
+                s.add_member(operator,project["id"],account["id"],"author")
+                backup=s.backup(operator)
+                s.set_policy(operator,False,0)
+                self.assertTrue(s.restore(operator,backup)["restored"])
+                self.assertTrue(s.policy()["allow_ai"])
+                rotated=s.rotate_actor(operator,account["id"])
+                with self.assertRaises(ServiceError) as err:
+                    s.restore(operator,backup)
+                self.assertEqual(err.exception.status,409)
+                self.assertEqual(s.actor_by_token(rotated["token"])["id"],account["id"])
+                with self.assertRaises(ServiceError):
+                    s.actor_by_token(account["token"])
+                backup=s.backup(operator)
+                s.remove_member(operator,project["id"],account["id"])
+                with self.assertRaises(ServiceError):
+                    s.restore(operator,backup)
+                self.assertEqual(s.projects(s.actor_by_token(rotated["token"])),[])
+            finally:
+                s.close()
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")

@@ -46,3 +46,25 @@ in this increment. Next: isolate provisioning and deployment threat model,
 expand the corpus and validate the user journey before adding new capabilities.
 
 The second consolidation increment adds a non-demo browser onboarding regression, same-origin loopback Host/Origin checks, generic unexpected API errors, rejected revoked API actors, and sign-out cleanup. These controls reduce local prototype exposure but do not establish public deployment safety. The local server refuses non-demo startup on a database containing the fixed demo credentials.
+
+## Credential and authority hardening
+
+New random bearer tokens and migrated legacy tokens use SHA-256 digests in the
+existing SQLite token column. Hashing is appropriate for randomly generated
+high-entropy tokens, not user passwords. Fixed demo credentials remain public
+and are detected by their digests; no production use. Migration uses SQLite
+secure_delete and VACUUM, but old backups and filesystem snapshots may retain
+plaintext. Rotate existing non-demo account credentials after migration and
+secure/delete obsolete copies according to your retention policy.
+
+Operators can list, rotate and revoke non-operator accounts. Rotation or
+revocation invalidates pending proposals and open delegated tasks; removing or
+downgrading an author similarly invalidates their pending authority in that
+project. No project may lose its last active human lead through these APIs.
+Assistant membership is limited to reader/author; imports require a human
+editor and an empty project. Existing manuscripts cannot be overwritten by
+ZIP import. Non-demo restore requires an identical account and membership
+snapshot, preventing rollback of rotated/revoked credentials or membership.
+This conservative restriction prevents some legitimate disaster recovery;
+operator credential recovery and offline recovery procedures remain open.
+No password authentication, MFA, OIDC, session expiry, TLS or deployment yet.
