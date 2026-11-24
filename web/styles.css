@@ -166,3 +166,14 @@ button:disabled{cursor:default;opacity:.46}
 .cell-operations{display:flex;flex-wrap:wrap;gap:5px;padding:6px 8px;border-top:1px solid var(--line)}
 .cell-operations button{font:inherit;font-size:.73rem;padding:4px 7px;border:1px solid var(--line);border-radius:4px;background:#fcfcf8;color:var(--ink)}
 .cell-operations button:disabled,#undo-structure:disabled{opacity:.5}
+
+.scientific-panel{padding:12px;border-top:1px solid var(--line);display:grid;gap:8px;font-size:.87rem}
+.scientific-field{display:grid;gap:4px}
+.scientific-field label,.scientific-field input,.scientific-field textarea{display:block;width:100%;min-width:0}
+.scientific-panel input,.scientific-panel textarea{font:inherit;padding:7px;border:1px solid var(--line);background:#fffefa;border-radius:3px}
+.scientific-table-scroll{overflow-x:auto}
+.scientific-panel table{border-collapse:collapse;width:100%;min-width:240px}
+.scientific-panel td{border:1px solid var(--line);padding:3px}
+.scientific-panel td input{width:100%;min-width:78px}
+.math-linear-preview{font:1.1rem/1.6 Georgia,serif;white-space:pre-wrap;overflow-wrap:anywhere}
+.cell-header select{max-width:100%;font:inherit;padding:4px}

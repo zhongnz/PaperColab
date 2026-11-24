@@ -205,3 +205,40 @@ test('structural split refuses invalid caret and never mutates input', () => {
   assert.throws(()=>B.structural(f,p.id,'split',{offset:0}),/caret/);
   assert.equal(B.exportText(f),f.original);
 });
+
+test('scientific adapters patch exact fields and preserve other source',()=>{
+  const table='\\begin{tabular}{lr}\r\n\\toprule\r\nName & 12 \\\\\r\n\\bottomrule\r\n\\end{tabular}';
+  const model=B.scientific(table);
+  assert.equal(model.type,'table');
+  assert.deepEqual(model.fields.map(f=>f.value),['Name','12']);
+  const edited=B.scientificEdit(table,['Name','34']);
+  assert.equal(edited,table.replace('12','34'));
+  assert.throws(()=>B.scientificEdit(table,['Name','x & y']),/Invalid/);
+  assert.equal(B.scientific(table.replace('Name','\\multicolumn{1}{l}{Name}')),null);
+  const equation='\\begin{equation}\n\\frac{x}{2}\n\\end{equation}';
+  assert.equal(B.scientific(equation).type,'equation');
+  assert.equal(B.scientificEdit(equation,['\n\\frac{y}{2}\n']),equation.replace('x','y'));
+  assert.throws(()=>B.scientificEdit(equation,['\\input{private}']),/Invalid/);
+  const figure='\\begin{figure}[ht]\n\\centering\n\\includegraphics{figures/a.png}\n\\caption{Old caption}\\label{fig:a}\n\\end{figure}';
+  assert.equal(B.scientific(figure).type,'figure');
+  assert.equal(B.scientificEdit(figure,['figures/a.png','New caption']),figure.replace('Old caption','New caption'));
+  assert.throws(()=>B.scientificEdit(figure,['../secret','Caption']),/Invalid/);
+  const list='\\begin{enumerate}\n\\item First\n\\item Second\n\\end{enumerate}';
+  assert.equal(B.scientificEdit(list,['First','Third']),list.replace('Second','Third'));
+  const source='Before.\n\n'+table+'\n\nAfter.';
+  const file=B.parseFile(source), [a,t,z]=file.blocks;
+  const result=B.structural(file,t.id,'scientific',{values:['Name','34']});
+  assert.equal(B.exportText(result.file),source.replace('12','34'));
+  assert.deepEqual(result.file.blocks.map(b=>b.id),[a.id,t.id,z.id]);
+  assert.equal(B.exportText(file),source);
+  const inserted=B.structural(file,a.id,'insert',{kind:'equation'});
+  assert.equal(B.scientific(B.current(inserted.file,inserted.file.blocks.find(b=>b.id===inserted.selectedId))).type,'equation');
+});
+test('citation keys and explicit citation insertion retain existing tokens',()=>{
+  assert.deepEqual(B.bibliographyKeys('@misc{one,\n title={Example}\n}\n@string{abc="X"}\n@article(two, title={Y})'),['one','two']);
+  const file=B.parseFile('Existing $x$.'), p=file.blocks[0];
+  B.appendCitation(file,p,'one');
+  assert.equal(B.exportText(file),'Existing $x$.~\\cite{one}');
+  assert.deepEqual(B.tokens(B.rich(file,p)),['$x$','\\cite{one}']);
+  assert.throws(()=>B.appendCitation(file,p,'bad}'),/citation/);
+});

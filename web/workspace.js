@@ -115,6 +115,91 @@
     note('Previous cell structure restored.');
   };
 
+  function scientificPanel(host, part, model) {
+    const panel=document.createElement('div');
+    panel.className='scientific-panel';
+    const title=document.createElement('strong');
+    title.textContent={equation:'Equation',table:'Table',figure:'Figure',list:'List'}[model.type];
+    panel.append(title);
+    const inputs=[];
+    function field(index) {
+      const data=model.fields[index], label=document.createElement('label');
+      const input=document.createElement(model.type==='equation'?'textarea':'input');
+      input.value=data.value; input.setAttribute('aria-label',data.name);
+      input.spellcheck=false;
+      if (model.type==='equation') input.rows=3;
+      label.append(input);
+      inputs[index]=input;
+      return label;
+    }
+    if (model.type==='table') {
+      const wrap=document.createElement('div'); wrap.className='scientific-table-scroll';
+      const table=document.createElement('table'), body=document.createElement('tbody');
+      for (const row of model.rows) {
+        const tr=document.createElement('tr');
+        for (const i of row) { const td=document.createElement('td'); td.append(field(i)); tr.append(td); }
+        body.append(tr);
+      }
+      table.append(body); wrap.append(table); panel.append(wrap);
+    } else {
+      for (let i=0;i<model.fields.length;i++) {
+        const row=document.createElement('div'); row.className='scientific-field';
+        const name=document.createElement('span'); name.textContent=model.fields[i].name;
+        row.append(name,field(i)); panel.append(row);
+      }
+    }
+    if (model.type==='equation') {
+      const preview=document.createElement('div'); preview.className='math-linear-preview';
+      const symbols={alpha:'α',beta:'β',gamma:'γ',delta:'δ',theta:'θ',lambda:'λ',mu:'μ',pi:'π',sigma:'σ',omega:'ω',sum:'∑',int:'∫',times:'×',cdot:'·',pm:'±',leq:'≤',geq:'≥',neq:'≠',infty:'∞'};
+      const render=()=>{preview.textContent='Linear preview: '+inputs[0].value.trim().replace(/\\([A-Za-z]+)/g,(m,k)=>symbols[k]??m);};
+      inputs[0].addEventListener('input',render); render(); panel.append(preview);
+    }
+    const actions=document.createElement('div'); actions.className='cell-operations';
+    const apply=document.createElement('button'), discard=document.createElement('button');
+    apply.type=discard.type='button'; apply.textContent='Apply scientific fields'; discard.textContent='Discard fields';
+    const status=document.createElement('p'); status.className='cell-status'; status.setAttribute('role','status');
+    const update=()=>{
+      const dirty=inputs.some((input,i)=>input.value!==model.fields[i].value);
+      if(dirty) drafts.set(part.id,true); else drafts.delete(part.id);
+      pending=drafts.size>0; apply.disabled=discard.disabled=!dirty;
+      status.textContent=dirty?'Apply or discard the scientific draft before changing views or exporting.':'';
+      updateControls();
+    };
+    inputs.forEach(input=>input.addEventListener('input',update));
+    discard.onclick=()=>{inputs.forEach((input,i)=>{input.value=model.fields[i].value; input.dispatchEvent(new Event('input'));});};
+    apply.onclick=()=>{
+      if(!drafts.has(part.id) || exporting) return;
+      if(drafts.size!==1){status.textContent='Apply or discard other cell drafts first.';return;}
+      // Validate while the draft is still retained. Only a successful
+      // checkpoint can remove it and rebuild the view.
+      try {
+        const old=file();
+        const result=B.structural(old,part.id,'scientific',{values:inputs.map(input=>input.value),root:session.data.roots.includes(path)});
+        if(!structuralHistory.has(path)) structuralHistory.set(path,[]);
+        structuralHistory.get(path).push(old);
+        files.set(path,result.file); pending=false;
+        showFile(path,result.selectedId); note('Scientific fields applied.');
+      } catch(error){status.textContent=error.message;}
+    };
+    apply.disabled=discard.disabled=true;
+    actions.append(apply,discard); panel.append(actions,status); host.append(panel);
+  }
+  function citationPicker(header, part, area, sync) {
+    if(part.kind!=='paragraph') return;
+    const keys=[...new Set([...session.data.files].filter(([name,data])=>/\.bib$/i.test(name)&&data.text).flatMap(([,data])=>B.bibliographyKeys(data.text)))].sort();
+    if(!keys.length) return;
+    const picker=document.createElement('select');
+    picker.setAttribute('aria-label','Citation key'); picker.append(new Option('Choose citation',''));
+    keys.forEach(key=>picker.append(new Option(key,key)));
+    const insert=document.createElement('button'); insert.type='button'; insert.textContent='Append citation';
+    insert.onclick=()=>{
+      if(!picker.value || pending || exporting) return;
+      try {B.appendCitation(file(),part,picker.value); area.value=normalise(B.current(file(),part)); sync(); refreshTitle(part); updateControls();}
+      catch(error){note(error.message);}
+    };
+    header.append(picker,insert);
+  }
+
   // Both multi-cell views use the same parsed file and edit map as split view.
   // No content is copied into a second authoritative document.
   function showMulti(item) {
@@ -148,6 +233,9 @@
         pre.textContent = B.current(file(), part);
         raw.append(summary, pre);
         content.append(raw);
+        const model=B.scientific(B.current(file(),part));
+        if(model) { cell.classList.add('scientific-cell'); scientificPanel(content,part,model); }
+        cell.addEventListener('focusin',()=>select(part));
         mounted.set(part.id, {cell, destroy() {}});
         continue;
       }
@@ -217,6 +305,9 @@
         };
         add('Add paragraph', 'insert', {kind: 'paragraph'});
         add('Add heading', 'insert', {kind: 'heading'});
+        add('Add equation', 'insert', {kind: 'equation'});
+        add('Add table', 'insert', {kind: 'table'});
+        add('Add list', 'insert', {kind: 'list'});
         add('Move up', 'move-up');
         add('Move down', 'move-down');
         if (part.kind === 'paragraph') {
@@ -248,6 +339,7 @@
         editor.view.dom.setAttribute('aria-label', 'Visual block ' + part.id);
       }
       mountVisual();
+      citationPicker(header,part,area,mountVisual);
       apply.disabled = discard.disabled = true;
       cell.addEventListener('focusin', () => select(part));
       mounted.set(part.id, {cell, destroy: () => editor?.destroy()});

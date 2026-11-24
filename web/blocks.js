@@ -237,6 +237,105 @@
     return parts.join('');
   }
 
+  // Conservative scientific adapters. Field offsets refer to the exact
+  // source, so editing one field does not reserialize the rest of its cell.
+  const mathCommands = new Set('frac sqrt sum prod int lim log ln sin cos tan exp alpha beta gamma delta epsilon varepsilon theta lambda mu pi rho sigma tau phi varphi omega Gamma Delta Theta Lambda Pi Sigma Phi Omega cdot times pm leq geq neq infty partial nabla left right text mathrm mathbf mathcal label ref eqref overline hat bar vec quad qquad'.split(' '));
+  function safeMath(value) {
+    if (!value.trim() || /[%$&#\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value)) return false;
+    let depth = 0;
+    for (const ch of value) {
+      if (ch === '{') depth++;
+      if (ch === '}' && --depth < 0) return false;
+    }
+    if (depth !== 0) return false;
+    return [...value.matchAll(/\\([a-zA-Z]+|.)/g)].every(m => mathCommands.has(m[1]) || ',;! '.includes(m[1])) && !/\\$/.test(value);
+  }
+  const plainField = value => !/[\\{}%$&#_^~\x00-\x1f]/.test(value);
+  const assetPath = value => /^[A-Za-z0-9_.\/-]+$/.test(value) && !value.startsWith('/') && !value.split('/').some(x => x === '..' || x === '');
+  function scientific(source) {
+    // Match only complete, independently parsed environments. The adapter
+    // intentionally does not attempt to interpret arbitrary TeX macros.
+    const eq = /^(\\begin\{(equation\*?)\}|\\\[|\$\$)([\s\S]*?)(\\end\{equation\*?\}|\\\]|\$\$)$/.exec(source);
+    if (eq) {
+      const close = eq[2] ? '\\end{' + eq[2] + '}' : eq[1] === '\\[' ? '\\]' : '$$';
+      if (eq[4] !== close || !safeMath(eq[3]) || /\\(?:label|ref|eqref)\b/.test(eq[3])) return null;
+      return {type:'equation', fields:[{name:'Expression', value:eq[3], from:eq[1].length,to:source.length-eq[4].length}]};
+    }
+    const table = /^(\\begin\{tabular\}\{([lcr]+)\})([\s\S]*?)(\\end\{tabular\})$/.exec(source);
+    if (table) {
+      const cols = table[2].length, rows = [], fields = [];
+      if (cols > 12) return null;
+      const body = table[3], base = table[1].length;
+      let pos = 0;
+      while (pos < body.length) {
+        const skip = /^(?:\s+|\\(?:toprule|midrule|bottomrule|hline)(?![A-Za-z]))+/.exec(body.slice(pos));
+        if (skip) pos += skip[0].length;
+        if (pos === body.length) break;
+        const end = body.indexOf('\\\\',pos);
+        if (end === -1) return null;
+        const row = body.slice(pos,end), values = row.split('&');
+        if (values.length !== cols || rows.length >= 100) return null;
+        let offset = base + pos, indices = [];
+        for (const value of values) {
+          const trimmed = value.trim();
+          if (!trimmed || !plainField(trimmed)) return null;
+          const from = offset + value.indexOf(trimmed);
+          indices.push(fields.length);
+          fields.push({name:'Row '+(rows.length+1)+', column '+(indices.length),value:trimmed,from,to:from+trimmed.length});
+          offset += value.length+1;
+        }
+        rows.push(indices);
+        pos = end+2;
+      }
+      if (!rows.length) return null;
+      return {type:'table',columns:cols,rows,fields};
+    }
+    const figure = /^(\\begin\{figure\*?\}(?:\[[htbp!H]+\])?\s*(?:\\centering\s*)?\\includegraphics(?:\[[A-Za-z0-9.,=\\ \t+-]+\])?\{)([^{}]+)(\}\s*\\caption\{)([^{}]*)(\}(?:\s*\\label\{[A-Za-z0-9:_.-]+\})?\s*\\end\{figure\*?\})$/.exec(source);
+    if (figure && figure[1].includes('figure*') === figure[5].includes('figure*') && assetPath(figure[2]) && plainField(figure[4])) {
+      const from = figure[1].length, cap = from + figure[2].length + figure[3].length;
+      return {type:'figure',fields:[{name:'Asset path',value:figure[2],from,to:from+figure[2].length},
+        {name:'Caption',value:figure[4],from:cap,to:cap+figure[4].length}]};
+    }
+    const list = /^(\\begin\{(itemize|enumerate)\})([\s\S]*?)(\\end\{\2\})$/.exec(source);
+    if (list) {
+      const body=list[3], starts=[...body.matchAll(/\\item(?![A-Za-z])\s+/g)], fields=[];
+      if (!starts.length || body.slice(0,starts[0].index).trim() || starts.length>100) return null;
+      for (let i=0;i<starts.length;i++) {
+        const at=starts[i].index+starts[i][0].length;
+        const value=body.slice(at,starts[i+1]?.index ?? body.length).trimEnd();
+        if (!value || !plainField(value)) return null;
+        fields.push({name:'Item '+(i+1),value,from:list[1].length+at,to:list[1].length+at+value.length});
+      }
+      return {type:'list',ordered:list[2]==='enumerate',fields};
+    }
+    return null;
+  }
+  function scientificEdit(source, values) {
+    const model=scientific(source);
+    if (!model || !Array.isArray(values) || values.length!==model.fields.length)
+      throw new Error('Unsupported scientific cell.');
+    let candidate=source;
+    for (let i=model.fields.length-1;i>=0;i--) {
+      const field=model.fields[i], value=values[i];
+      if (typeof value!=='string' || value.length>16000 ||
+          !(model.type==='equation' ? safeMath(value) : model.type==='figure' && i===0 ? assetPath(value) : plainField(value)) ||
+          (model.type==='table' || model.type==='list') && (!value.trim() || value!==value.trim()))
+        throw new Error('Invalid '+field.name+'. Use supported plain text or LaTeX math.');
+      candidate=candidate.slice(0,field.from)+value+candidate.slice(field.to);
+    }
+    const next=scientific(candidate);
+    if (!next || next.type!==model.type || next.fields.length!==model.fields.length)
+      throw new Error('Scientific edit changes the supported structure.');
+    return candidate;
+  }
+  function bibliographyKeys(text) {
+    return [...text.matchAll(/^[ \t]*@(?!comment\b|string\b|preamble\b)[A-Za-z]+\s*[{(]\s*([A-Za-z0-9_.:/+-]+)\s*,/gmi)].map(m=>m[1]);
+  }
+  function appendCitation(file, block, key) {
+    if (block.kind!=='paragraph' || !/^[A-Za-z0-9_.:/+-]+$/.test(key)) throw new Error('Choose a supported citation key.');
+    editSource(file,block,current(file,block)+'~\\cite{'+key+'}');
+  }
+
   // Validate structural edits against exact expected source ranges; identities
   // follow content, not parse order. No mutation occurs until validation passes.
   function structural(file, id, action, options = {}) {
@@ -249,7 +348,7 @@
       return { id: block.id, kind: block.kind, rich: rich(file, block), source, from, to };
     });
     const i = rows.findIndex(row => row.id === id), row = rows[i];
-    if (!row?.rich) throw new Error('Select an editable cell; preserved LaTeX cannot be changed structurally.');
+    if (!row || (!row.rich && !(action === 'scientific' && scientific(row.source)))) throw new Error('Select an editable cell; preserved LaTeX cannot be changed structurally.');
     const eol = text.match(/\r\n|\r|\n/)?.[0] ?? '\n', sep = eol + eol;
     let nextId = rows.reduce((n, r) => Math.max(n, r.id + 1), file.nextId ?? 1);
     const fresh = () => nextId++;
@@ -264,10 +363,22 @@
     switch (action) {
       case 'insert': {
         start = end = row.to;
-        const kind = options.kind === 'heading' ? 'heading' : 'paragraph';
+        const templates = {
+          heading:['heading','\\section{New section}'],
+          paragraph:['paragraph','New paragraph.'],
+          equation:['raw','\\begin{equation}'+eol+'x = y'+eol+'\\end{equation}'],
+          table:['raw','\\begin{tabular}{ll}'+eol+'A & B \\\\'+eol+'1 & 2 \\\\'+eol+'\\end{tabular}'],
+          list:['raw','\\begin{itemize}'+eol+'\\item New item'+eol+'\\end{itemize}']
+        };
+        const [kind, source] = Object.hasOwn(templates,options.kind) ? templates[options.kind] : templates.paragraph;
         selectedId = fresh();
-        items = [piece(selectedId, kind, kind === 'heading' ? '\\section{New section}' : 'New paragraph.')];
+        items = [piece(selectedId, kind, source)];
         prefix = suffix = sep;
+        break;
+      }
+      case 'scientific': {
+        const source = scientificEdit(row.source, options.values);
+        items = [piece(id, 'raw', source)];
         break;
       }
       case 'delete':
@@ -378,5 +489,5 @@
       .map(([command, blocks]) => ({ command, blocks }));
     return report;
   }
-  globalThis.PaperColabBlocks = { parseFile, current, rich, editVisual, editSource, exportText, preview, tokens, coverage, structural };
+  globalThis.PaperColabBlocks = { parseFile, current, rich, editVisual, editSource, exportText, preview, tokens, coverage, structural, scientific, scientificEdit, bibliographyKeys, appendCitation };
 })();
