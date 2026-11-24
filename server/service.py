@@ -264,8 +264,11 @@ class Service:
         self.require(actor, None, "create_actor")
         if kind not in {"human", "assistant"}:
             raise ServiceError(400, "Kind must be human or assistant.")
+        if not isinstance(name,str) or not name.strip() or len(name.strip())>120:
+            raise ServiceError(400, "Provide an account name (1–120 characters).")
+        name = name.strip()
         token = secrets.token_urlsafe(24)
-        actor_id = self._insert_actor(name.strip() or "Member", kind, token, "")
+        actor_id = self._insert_actor(name, kind, token, "")
         self._audit(actor["id"], "create-actor", None, {"actor": actor_id, "kind": kind})
         self.db.commit()
         return {"id": actor_id, "name": name, "kind": kind, "token": token}

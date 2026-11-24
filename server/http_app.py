@@ -23,7 +23,7 @@ class Api:
         else:
             token = ""
         if path == "/api/health" and method == "GET":
-            return 200, {"ok": True}
+            return 200, {"ok": True, "demo": self.service.demo}
         try:
             bits = [part for part in path.split("/") if part]
             # A task capability is deliberately NOT an ordinary actor token.
@@ -53,12 +53,19 @@ class Api:
         except Exception as error:
             status = getattr(error, "status", None) or 500
             if status == 500 and not getattr(error, "status", None):
-                return 500, {"error": "The request failed. " + str(error)}
+                return 500, {"error": "The request failed. Contact the local operator."}
             return status, {"error": str(error)}
 
     def route(self, method, path, query, headers, body, actor):
         content = headers.get("content-type", "")
-        data = json.loads(body.decode() or "{}") if body and "json" in content else {}
+        try:
+            data = json.loads(body.decode() or "{}") if body and "json" in content else {}
+        except (ValueError, UnicodeError):
+            from server.service import ServiceError
+            raise ServiceError(400, "Invalid JSON request.") from None
+        if not isinstance(data, dict):
+            from server.service import ServiceError
+            raise ServiceError(400, "Expected a JSON object.")
         bits = [part for part in path.split("/") if part]
         # /api/...
         if bits[:2] == ["api", "me"] and method == "GET":

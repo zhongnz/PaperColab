@@ -3,7 +3,28 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const demo = [['Ada', 'demo-ada'], ['Bao', 'demo-bao'], ['Iris', 'demo-iris'], ['Quill', 'demo-quill']];
-  let token = sessionStorage.getItem('papercolab-token') || 'demo-ada';
+  let token = sessionStorage.getItem('papercolab-token') || '';
+  let workspaceView='manuscript';
+  function setWorkspaceView(view){
+    workspaceView=view;
+    $('open').dataset.workspaceView=view;
+    for(const button of $('workspace-nav').querySelectorAll('[data-workspace-tab]'))
+      button.setAttribute('aria-pressed',String(button.dataset.workspaceTab===view));
+  }
+  for(const button of $('workspace-nav').querySelectorAll('[data-workspace-tab]')){
+    button.onclick=()=>{
+      if(busy)return;
+      if((dirty||recovery)&&button.dataset.workspaceTab!=='manuscript'){
+        say('Save or keep your local draft, or close the comparison, before switching workspace views.');return;
+      }
+      setWorkspaceView(button.dataset.workspaceTab);
+    };
+  }
+  function clearProvision(){
+    $('provision-id').value=$('provision-token').value='';
+    $('show-provision-token').checked=false;$('provision-token').type='password';
+    $('provision-result').hidden=true;
+  }
   let me, projects = [], detail, fileText = '', selected, visual, source, draft = null, sourceDraft = '';
   let dirty = false, busy = false, polling = false, sourceDirty = false;
   let viewMode='focused', cellViews=new Map(), multiDrafts=new Map(), fileRevision=null;
@@ -233,7 +254,10 @@
     $('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=value||Boolean(recovery);
     for(const button of $('hosted-views').querySelectorAll('[data-view]'))button.disabled=value;
     $('file').disabled=value;
-    $('actor').disabled=$('use-token').disabled=value;
+    $('actor').disabled=$('use-token').disabled=$('sign-out').disabled=value;
+    $('workspace-nav').inert=value;
+    $('provision-panel').inert=value;
+    $('project-settings').inert=value;
     $('create-agent-task').disabled=value||!$('delegate-cell').options.length||!$('delegate-assistant').options.length;
     $('refresh-agent-tasks').disabled=value;
     $('workflow-panel').inert=value;
@@ -293,13 +317,18 @@
   async function refresh() {
     clear();
     me = await api('GET', '/api/me');
+    $('project-create-tools').hidden=me.kind!=='human';
+    $('project-search-tools').hidden=false;
+    $('provision-panel').hidden=me.workspace_role!=='operator';
+    $('welcome-message').textContent='Choose a project from the sidebar, create a new project, or import a LaTeX ZIP.';
     $('who').textContent = me.name + (me.workspace_role ? ' · ' + me.workspace_role : '') + ' · ' + me.kind;
     projects = await api('GET', '/api/projects');
     const list = $('project-list');
     list.replaceChildren();
     for (const project of projects) {
       const button = document.createElement('button');
-      button.type = 'button'; button.className = 'text-button';
+      button.type = 'button'; button.className = 'project-choice';
+      button.dataset.projectId=project.id;
       button.textContent = project.title + ' · ' + project.role;
       button.onclick = () => { if(!dirty || window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch project?':'Discard your local cell draft?')) act(()=>openProject(project.id),true); };
       list.append(button);
@@ -311,6 +340,9 @@
   async function openProject(id) {
     if(live&&live.project!==id)stopLive();
     if(detail?.id!==id){
+      setWorkspaceView('manuscript');
+      $('member-id').value='';
+      clearProvision();
       $('delegate-instructions').value='';
       for(const key of ['experiment-title','experiment-objective','experiment-image','object-body'])$(key).value='';
       for(const key of ['workflow-title','workflow-objective','workflow-step-title','workflow-instructions','workflow-criteria'])$(key).value='';
@@ -322,9 +354,15 @@
     detail = incoming;
     updateTransportControl();
     $('open').hidden = false;
+    $('workspace-welcome').hidden=true;
+    for(const button of $('project-list').querySelectorAll('[data-project-id]'))
+      button.setAttribute('aria-current',button.dataset.projectId===id?'true':'false');
     $('project-title').textContent = detail.title;
     $('project-title').dataset.id = detail.id;
     const ready = detail.readiness;
+    $('review-count').textContent=ready.pending_suggestions?'('+ready.pending_suggestions+')':'';
+    $('release').hidden=role()!=='lead'||me.kind!=='human';
+    $('membership-form').hidden=role()!=='lead'||me.kind!=='human';
     $('readiness').textContent = ready.ready ? 'Ready for release.' :
       ready.pending_suggestions + ' pending suggestions, ' + ready.unresolved_anchors + ' unresolved anchors, ' + ready.open_decisions + ' open decisions.';
     const members = $('members');
@@ -333,6 +371,15 @@
       const row = document.createElement('div');
       row.className = 'person';
       row.textContent = member.name + ' · ' + member.kind + ' · ' + member.role;
+      if(role()==='lead'&&me.kind==='human'&&member.id!==me.id){
+        const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.className='text-button';
+        remove.setAttribute('aria-label','Remove '+member.name+' from project');
+        remove.onclick=()=>act(async()=>{
+          if(!window.confirm('Remove this member from the project?'))return;
+          await api('DELETE','/api/projects/'+detail.id+'/members/'+member.id);
+          await openProject(detail.id);say('Project membership removed.');
+        });row.append(remove);
+      }
       members.append(row);
     }
     const files = detail.files.filter(file => file.is_text && /\.(tex|ltx)$/i.test(file.path));
@@ -1049,7 +1096,7 @@
 
   $('actor').replaceChildren(...demo.map(([name, value]) => new Option(name, value)));
   $('actor').value = token;
-  $('token').value = token;
+  $('token').value = '';
   function changeToken(next) {
     if(busy || recovery || (dirty && !window.confirm($('durable-drafts').checked?'Leave active drafts in local recovery and switch account?':'Discard your local cell draft?'))) {$('actor').value=token;return;}
     act(async()=>{
@@ -1061,16 +1108,40 @@
       for(const key of ['workflow-title','workflow-objective','workflow-step-title','workflow-instructions','workflow-criteria'])$(key).value='';
       destroyEditors(); detail=null; selected=null; fileText='';
       $('crdt-enabled').checked=false;updateTransportControl();
-      $('open').hidden=true;
-      token=next;sessionStorage.setItem('papercolab-token',token);$('token').value=token;$('actor').value=token;
-      await refresh();
+      $('open').hidden=true;$('workspace-welcome').hidden=false;
+      $('project-list').replaceChildren();$('search-results').replaceChildren();
+      $('project-create-tools').hidden=$('project-search-tools').hidden=$('provision-panel').hidden=true;
+      clearProvision();me=null;projects=[];
+      $('who').textContent='Signed out';
+      $('welcome-message').textContent='Sign in with your local access token to get started.';
+      token=next;$('token').value='';$('actor').value=token;
+      sessionStorage.removeItem('papercolab-token');
+      if(!token)return;
+      try{await refresh();sessionStorage.setItem('papercolab-token',token);}
+      catch(error){token='';$('actor').value='';throw error;}
       if(projects.some(p=>p.id===previous)) await openProject(previous);
     },true);
   }
   $('actor').onchange = () => changeToken($('actor').value);
   $('use-token').onclick = () => changeToken($('token').value.trim());
+  $('sign-out').onclick=()=>changeToken('');
+  $('provision-account').onclick=()=>act(async()=>{
+    clearProvision();
+    const account=await api('POST','/api/admin/actors',{name:$('account-name').value.trim(),kind:$('account-kind').value});
+    $('provision-id').value=account.id;$('provision-token').value=account.token;
+    $('provision-result').hidden=false;$('account-name').value='';
+    say('Account created. Copy its credential securely before clearing it.');
+  });
+  $('show-provision-token').onchange=()=>{$('provision-token').type=$('show-provision-token').checked?'text':'password';};
+  $('hide-provision').onclick=clearProvision;
+  $('add-member').onclick=()=>act(async()=>{
+    const id=$('member-id').value.trim();
+    if(!id||id===me.id)throw Error('Enter another local account ID.');
+    await api('POST','/api/projects/'+detail.id+'/members',{actor_id:id,role:$('member-role').value});
+    $('member-id').value='';await openProject(detail.id);say('Project membership updated.');
+  });
   $('create').onclick = () => act(() => api('POST', '/api/projects', { title: $('new-title').value }).then(project => openProject(project.id)).then(refresh));
-  $('example').onclick = () => act(() => api('POST', '/api/projects', { title: 'Estuary field notes', example: true }).then(project => openProject(project.id)));
+  $('example').onclick = () => act(() => api('POST', '/api/projects', { title: 'Estuary field notes', example: true }).then(project => openProject(project.id)).then(refresh));
   $('zip').onchange = event => {
     const file = event.target.files[0];
     event.target.value = '';
@@ -1078,7 +1149,7 @@
     act(async () => {
       const project = await api('POST', '/api/projects', { title: file.name.replace(/\.zip$/i, '') });
       await api('POST', '/api/projects/' + project.id + '/import', null, file);
-      await openProject(project.id);
+      await openProject(project.id);await refresh();
     });
   };
   $('file').onchange = () => {
@@ -1175,5 +1246,13 @@
   });
   updateView();
   $('allow-ai').checked = true;
-  act(refresh);
+  act(async()=>{
+    const response=await fetch('/api/health');
+    const health=await response.json();
+    $('demo-account').hidden=!health.demo;
+    if(!token&&health.demo)token='demo-ada';
+    $('actor').value=token;
+    if(token){await refresh();sessionStorage.setItem('papercolab-token',token);}
+    else $('who').textContent='Signed out';
+  });
 })();

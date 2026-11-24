@@ -132,8 +132,8 @@ def main():
     host = os.environ.get("PAPERCOLAB_HOST", "127.0.0.1")
     port = int(os.environ.get("PAPERCOLAB_PORT", "8787"))
     demo = os.environ.get("PAPERCOLAB_DEMO") == "1"
-    if demo and host not in {"127.0.0.1", "localhost", "::1"}:
-        raise SystemExit("Refusing demo credentials on a non-local address.")
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        raise SystemExit("v0.1 is a loopback-only development preview. Public deployment is not supported.")
     data = Path(os.environ.get("PAPERCOLAB_DATA", ROOT / "data"))
     crdt = os.environ.get("PAPERCOLAB_EXPERIMENTAL_CRDT") == "1"
     if crdt and host not in {"127.0.0.1", "localhost", "::1"}:

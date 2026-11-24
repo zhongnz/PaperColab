@@ -43,6 +43,12 @@ def exercise(browser, port, width):
     page.locator("#actor").select_option("demo-bao")
     expect(page.locator("#who")).to_contain_text("Bao")
     page.get_by_role("button", name=re.compile("Estuary field notes")).click()
+    def view(name):
+        button=page.locator(f'#workspace-nav [data-workspace-tab="{name}"]')
+        button.click()
+        expect(button).to_have_attribute("aria-pressed","true")
+    expect(page.locator("#manuscript-panel")).to_be_visible()
+    expect(page.locator("#experiment-panel")).not_to_be_visible()
     # The display excerpt is truncated and changes after repeated edits.
     # Identify the first paragraph by its semantic kind and persistent ID.
     outline = page.locator('#blocks button[data-kind="paragraph"]').first
@@ -59,10 +65,13 @@ def exercise(browser, port, width):
         expect(page.locator("#queue")).to_contain_text("Bao")
         expect(page.locator("#queue")).to_contain_text("visual · pending")
         page.locator("#actor").select_option("demo-iris")
+        expect(page.locator("#who")).to_contain_text("Iris")
+        view("collaboration")
         accept = page.get_by_role("button", name="Accept", exact=True)
         expect(accept).to_be_visible()
         accept.click()
         expect(page.locator("#queue")).to_contain_text("accepted")
+        view("manuscript")
         expect(page.get_by_role("textbox", name="Visual block text")).to_contain_text("Checked")
         with page.expect_download() as download:
             page.get_by_role("button", name="Download current ZIP").click()
@@ -161,6 +170,7 @@ def exercise(browser, port, width):
         expect(page.get_by_role("button",name="Focused",exact=True)).to_be_enabled()
         page.locator("#actor").select_option("demo-ada")
         expect(page.locator("#who")).to_contain_text("Ada")
+        view("collaboration")
         expect(page.locator("#delegate-form")).to_be_visible()
         expect(page.locator("#create-agent-task")).to_be_enabled()
         page.locator("#delegate-cell").select_option(stable_id)
@@ -186,7 +196,9 @@ def exercise(browser, port, width):
         result=page.request.post(endpoint+"/proposal",headers=headers,
             data={"after":after,"rationale":"Fixture proposal from restricted task client.","evidence_ids":context_ids[:1]})
         assert result.ok
+        view("manuscript")
         expect(page.get_by_role("textbox",name="Visual block text")).not_to_contain_text("three readings")
+        view("collaboration")
         page.get_by_role("button",name="Hide credential").click()
         expect(page.locator("#delegated-token")).to_have_value("")
         page.get_by_role("button",name="Refresh tasks and review").click()
@@ -196,7 +208,9 @@ def exercise(browser, port, width):
         expect(review).to_contain_text("Proposed source:")
         review.get_by_role("button",name="Accept",exact=True).click()
         expect(page.locator("#agent-task-list")).to_contain_text("Quill · accepted")
+        view("manuscript")
         expect(page.get_by_role("textbox",name="Visual block text")).to_contain_text("three readings")
+        view("collaboration")
         expect(page.locator("#create-workflow")).to_be_enabled()
         page.locator("#workflow-title").fill("Sampling workflow")
         page.locator("#workflow-objective").fill("Coordinate two reviewed manuscript revisions.")
@@ -248,6 +262,7 @@ def exercise(browser, port, width):
         expect(first).to_have_attribute("data-status","completed")
         expect(second).to_have_attribute("data-status","ready")
         expect(page.locator("#workflow-list")).to_contain_text("1/2 evaluated")
+        view("research")
         expect(page.locator("#create-experiment")).to_be_enabled()
         # Real browser registry/receipt round trip; synthetic receipt is
         # intentionally distinct from the actual container CI workflow.
@@ -305,7 +320,15 @@ def exercise(browser, port, width):
             panel.get_by_label("Manuscript cell for results").select_option(stable_id)
             panel.get_by_role("button",name="Link output to cell").click()
             expect(panel).to_contain_text("· exact")
+            view("manuscript")
             expect(page.locator(f'#blocks button[data-stable-id="{stable_id}"]')).to_contain_text("1 computational link")
+    # Workspace navigation remains responsive and does not discard dirty text.
+    view("settings")
+    expect(page.locator("#members")).to_be_visible()
+    expect(page.locator("#manuscript-panel")).not_to_be_visible()
+    view("manuscript")
+    expect(prose).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     page.close()
     assert not errors, errors
 

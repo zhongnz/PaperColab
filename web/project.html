@@ -8,7 +8,7 @@
   <title>Workspace · PaperColab</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="workspace-app">
   <header class="mast"><div class="mast-inner">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span>PaperColab</div>
     <a class="repo" href="index.html">Offline checker</a>
@@ -18,39 +18,77 @@
     <header class="intro">
       <p class="overline">Research workspace</p>
       <h1>Work on the project<span class="dot">.</span></h1>
-      <p>Import a manuscript, suggest a change in either editor, and let a person accept it. A release stays put after the draft moves on.</p>
+      <p>Write, collaborate, manage research evidence and prepare reproducible releases.</p>
     </header>
-    <div class="project-tools">
-      <label>Signed in as <select id="actor"></select></label>
-      <label>Token <input id="token" autocomplete="off" spellcheck="false"></label>
+    <div class="project-tools account-bar">
+      <label id="demo-account" hidden>Demo account <select id="actor"></select></label>
+      <label>Access token <input id="token" type="password" autocomplete="off" spellcheck="false"></label>
       <button type="button" class="secondary" id="use-token">Use token</button>
+      <button type="button" class="secondary" id="sign-out">Sign out</button>
       <span id="who" role="status"></span>
     </div>
     <p id="status" role="status" class="muted"></p>
     <div id="error" role="alert" hidden></div>
+    <div class="workspace-layout">
+    <aside class="workspace-sidebar" aria-label="Project navigation">
     <section class="panel" aria-labelledby="projects-heading">
       <h2 id="projects-heading">Projects</h2>
-      <div class="project-tools">
+      <div class="project-tools" id="project-create-tools" hidden>
         <label>Title <input id="new-title" value="New manuscript"></label>
         <button type="button" class="primary" id="create">Create project</button>
         <button type="button" class="secondary" id="example">Open the estuary example</button>
         <label class="secondary" style="padding:10px 17px;border-radius:5px">Import ZIP <input id="zip" type="file" accept=".zip,application/zip" hidden></label>
       </div>
-        <div class="project-tools">
+        <div class="project-tools" id="project-search-tools" hidden>
           <label>Search <input id="search"></label>
           <button type="button" class="secondary" id="run-search">Search</button>
         </div>
         <div id="search-results"></div>
         <div id="project-list"></div>
     </section>
-    <section id="open" class="stack" hidden>
-      <section class="panel">
+    <section class="panel" id="provision-panel" hidden>
+      <h2>Local accounts</h2>
+      <p class="muted">Operator only. Create a named account and share its access token securely.</p>
+      <label for="account-name">Name</label><input id="account-name" maxlength="120">
+      <label for="account-kind">Account kind</label><select id="account-kind"><option value="human">Human</option><option value="assistant">Assistant</option></select>
+      <button type="button" class="secondary" id="provision-account">Create local account</button>
+      <div id="provision-result" hidden>
+        <label for="provision-id">Account ID (for project membership)</label><input id="provision-id" readonly>
+        <label for="provision-token">Access token (shown once)</label><input id="provision-token" readonly type="password" autocomplete="off">
+        <label><input type="checkbox" id="show-provision-token"> Show access token</label>
+        <button type="button" id="hide-provision">Clear credential</button>
+      </div>
+    </section>
+    </aside>
+    <div class="workspace-content">
+    <section class="panel" id="workspace-welcome">
+      <h2>Open a research project</h2>
+      <p id="welcome-message">Sign in with your local access token to get started.</p>
+      <p class="muted">Private development preview. Keep original manuscripts and work on test copies.</p>
+    </section>
+    <section id="open" class="stack" data-workspace-view="manuscript" hidden>
+      <section class="panel project-summary">
         <h2 id="project-title"></h2>
         <p id="readiness" class="muted"></p>
-        <div id="members"></div>
         <div class="project-tools">
           <button type="button" class="secondary" id="export">Download current ZIP</button>
           <button type="button" class="primary" id="release">Approve release</button>
+        </div>
+        <nav id="workspace-nav" aria-label="Workspace views" class="workspace-nav">
+          <button type="button" data-workspace-tab="manuscript" aria-pressed="true">Manuscript</button>
+          <button type="button" data-workspace-tab="collaboration" aria-pressed="false">AI &amp; review <span id="review-count"></span></button>
+          <button type="button" data-workspace-tab="research" aria-pressed="false">Research library</button>
+          <button type="button" data-workspace-tab="settings" aria-pressed="false">Project settings</button>
+        </nav>
+      </section>
+      <section class="panel" data-workspace-panel="settings" id="project-settings">
+        <h2>Project team and releases</h2>
+        <div id="members"></div>
+        <div id="membership-form" hidden>
+          <p class="muted">Add an existing local account by its ID. Only project leads can change membership.</p>
+          <label for="member-id">Account ID</label><input id="member-id" autocomplete="off" spellcheck="false">
+          <label for="member-role">Project role</label><select id="member-role"><option value="author">Author</option><option value="reviewer">Reviewer</option><option value="reader">Reader</option><option value="lead">Lead</option></select>
+          <button type="button" id="add-member">Add or update member</button>
         </div>
         <div id="releases"></div>
         <div class="project-tools">
@@ -58,7 +96,7 @@
           <button type="button" class="secondary" id="save-collection">Save collection</button>
         </div>
       </section>
-      <section class="panel">
+      <section class="panel" data-workspace-panel="manuscript" id="manuscript-panel">
         <h2>Manuscript</h2>
         <div class="split">
           <div>
@@ -133,7 +171,7 @@
           </div>
         </div>
       </section>
-      <section class="panel" id="workflow-panel" hidden>
+      <section class="panel" data-workspace-panel="collaboration" id="workflow-panel" hidden>
         <h2>Research workflows</h2>
         <p class="muted">Plan several scoped research steps. Prerequisites require accepted contributions and an explicit human evaluation. Launch and retry are manual.</p>
         <div id="workflow-form" hidden>
@@ -158,7 +196,7 @@
         </div>
         <div id="workflow-list" class="stack"></div>
       </section>
-      <section class="panel" id="agent-tasks" hidden>
+      <section class="panel" data-workspace-panel="collaboration" id="agent-tasks" hidden>
         <h2>AI task delegation</h2>
         <p class="muted">Assign one editable cell and explicitly selected research context. Restricted credentials permit one proposal, never direct manuscript edits. No model is called automatically.</p>
         <div id="delegate-form" hidden>
@@ -182,12 +220,12 @@
         <button type="button" id="refresh-agent-tasks" class="secondary">Refresh tasks and review</button>
         <div id="agent-task-list" class="stack"></div>
       </section>
-      <section class="panel">
+      <section class="panel" data-workspace-panel="collaboration">
         <h2>Review</h2>
         <p class="muted">Visual and source edits wait as the same kind of suggestion. Accepting one leaves an overlapping edit stale instead of merging it.</p>
         <div id="queue" class="queue stack"></div>
       </section>
-      <section class="panel" id="experiment-panel" hidden>
+      <section class="panel" data-workspace-panel="research" id="experiment-panel" hidden>
         <h2>Computational research</h2>
         <p class="muted">Pin local text code and datasets, download a bundle, run it explicitly in a trusted local Docker environment, and import the receipt for human review. The web server never executes code.</p>
         <div id="experiment-form" hidden>
@@ -201,8 +239,8 @@
         </div>
         <div id="experiment-list" class="stack"></div>
       </section>
-      <section class="panel">
-        <h2>Evidence</h2>
+      <section class="panel" data-workspace-panel="research">
+        <h2>Research library and evidence</h2>
         <div id="library"></div>
         <div class="project-tools">
           <label>Claim <input id="claim" style="width:min(100%,320px)"></label>
@@ -220,7 +258,7 @@
         </div>
         <div id="links"></div>
       </section>
-      <section class="panel" id="operate">
+      <section class="panel" data-workspace-panel="settings" id="operate">
         <h2>Decisions and operation</h2>
         <div class="project-tools">
           <label>Decision <input id="decision" style="width:min(100%,360px)"></label>
@@ -238,6 +276,8 @@
         <div id="audit"></div>
       </section>
     </section>
+    </div>
+    </div>
   </main>
   <footer>PaperColab <span aria-hidden="true">/</span> Workspace</footer>
   <style>
