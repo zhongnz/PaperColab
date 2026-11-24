@@ -70,7 +70,7 @@ def inspect(archive, root):
     report=json.loads(result.stdout)
     candidates=[r for r in report["roots"] if r["root"]==root]
     if len(candidates)!=1:
-        raise ValueError("The selected root is not an unambiguous detected candidate path.")
+        raise ValueError("The explicitly selected root is not a detected candidate path.")
     row=candidates[0]
     c=row["coverage"]
     return {"detected_root_count":len(report["roots"]),"root":root,"counts":row["counts"],

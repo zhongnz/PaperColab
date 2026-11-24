@@ -76,6 +76,22 @@ jobs:
           grep -F 'Replicate samples.' build/editor-edited.txt
           grep -F 'Revised sampling' build/editor-edited.txt
 
+      - name: Verify pilot preflight and browser export with actual isolated builds
+        run: |
+          python -m scripts.pilot_check sample.zip --root estuary/main.tex --build --report build/pilot-preflight.json
+          python -m scripts.pilot_check sample.zip --root estuary/main.tex --edited build/editor-edited.zip --allow-changed estuary/sections/methods.tex --build --report build/pilot-comparison.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          before=json.loads(Path('build/pilot-preflight.json').read_text())
+          after=json.loads(Path('build/pilot-comparison.json').read_text())
+          assert before['status']=='baseline-ready'
+          assert after['status']=='review-required'
+          assert after['comparison']['changed_files']==['estuary/sections/methods.tex']
+          assert after['comparison']['unexpected_changes']==[]
+          assert after['matching_build_profile'] and after['manual_review_required']
+          PY
+
       - name: Fetch the pinned published manuscript
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -41,6 +41,7 @@ research copies. For Windows PowerShell:
 git clone https://github.com/zhongnz/PaperColab.git
 cd PaperColab
 git checkout feature/block-native-editor
+# Check CI at the intended SHA before using the tools. Pin that SHA.
 git rev-parse HEAD
 docker pull texlive/texlive:TL2025-historic
 New-Item -ItemType Directory -Force pilot-local
@@ -52,7 +53,8 @@ $env:PAPERCOLAB_LOCAL_PDF_PREVIEW="1"
 python -m server
 ~~~
 
-Record and pin the exact checked-out SHA in the private session log;
+Record and pin the exact checked-out SHA in the private session log
+(and use git checkout --detach followed by that SHA for repeat sessions);
 before using it, verify green ordinary workflows at that SHA. A fresh data
 directory avoids mixing demo accounts or prior research. The terminal
 prints a local operator credential. Keep it off shared notes/screenshots.
@@ -161,3 +163,5 @@ Proposed pilot decision criteria (not achieved outcomes):
 
 Treat early results as qualitative discovery, not a representative
 statistical claim. Prioritise repeatable blockers in the next iteration.
+
+The ordinary export workflow also runs the new pilot verification CLI on the existing browser-edited sample ZIP with actual Docker builds. These automated fixtures establish tool behaviour, not user adoption or usability evidence.
