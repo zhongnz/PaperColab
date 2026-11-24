@@ -119,6 +119,14 @@ button:disabled{cursor:default;opacity:.46}
 .source-actions:has(button:not([hidden])){padding:10px;border-top:1px solid var(--line)}
 #raw-explanation,#block-empty,#edit-message{color:var(--muted);font-size:.85rem}
 #edit-message{margin:12px 0 0}#edit-message:empty{margin:0}
+.project-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 22px}
+.project-tools select,.project-tools input{width:auto}
+.stack{display:grid;gap:14px}
+.panel{background:#fffefa;border:1px solid var(--line);border-radius:8px;padding:18px}
+.panel h2{font-size:1.7rem;letter-spacing:-.03em;margin-bottom:8px}
+.split{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:14px}
+.person{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.queue button{margin-right:8px}
 @media(max-width:760px){
  body.editing main,body.editing .mast-inner,body.editing footer{width:calc(100% - 28px)}#workspace{margin-top:16px}.edit-layout{grid-template-columns:1fr}
  .outline{border-right:0;border-bottom:1px solid var(--line);padding:12px 15px}
@@ -126,4 +134,5 @@ button:disabled{cursor:default;opacity:.46}
  #block-list button{padding:4px 8px}.block-excerpt{-webkit-line-clamp:1}
  .edit-header{margin:9px 0 15px}.visual-prose{min-height:110px;padding:14px}
  #open-editor{margin:8px 0}
+ .split{grid-template-columns:1fr}
 }
