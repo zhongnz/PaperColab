@@ -58,7 +58,7 @@
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'text-button';
       button.textContent = project.title + ' · ' + project.role;
-      button.onclick = () => { if(!dirty || window.confirm('Discard your local cell draft?')) act(()=>openProject(project.id)); };
+      button.onclick = () => { if(!dirty || window.confirm('Discard your local cell draft?')) act(()=>openProject(project.id),true); };
       list.append(button);
     }
     $('operator-tools').hidden = me.workspace_role !== 'operator';
@@ -184,11 +184,11 @@
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'secondary';
       button.textContent = (block.kind === 'heading' ? 'Heading' : block.rich ? 'Paragraph' : 'Preserved') + ' · ' + block.quote.replace(/\s+/g, ' ').slice(0, 80);
-      button.onclick = () => { if(!dirty || window.confirm('Discard your local cell draft?')) selectBlock(block); };
+      button.onclick = () => { if(!busy && (!dirty || window.confirm('Discard your local cell draft?'))) selectBlock(block); };
       host.append(button);
     }
     const current = blocks.find(block => block.stableId === selected?.stableId) || blocks.find(block => block.rich && block.kind === 'paragraph') || blocks[0];
-    if (current) selectBlock(current);
+    if (current) selectBlock(current); else {selected=null;destroyEditors();}
   }
 
   function selectBlock(block) {
@@ -196,7 +196,7 @@
     destroyEditors();
     const root = Boolean(detail.files.find(file => file.path === block.path)?.is_root);
     const parsed = PaperColabBlocks.parseFile(fileText, { root });
-    const local = parsed.blocks.find(item => item.from === block.from && item.to === block.to);
+    const local = parsed.blocks.find(item => item.from === block.from && item.to === block.to && PaperColabBlocks.current(parsed,item)===block.quote);
     const line = fileText.slice(0, block.from).split(/\r\n|\r|\n/).length;
     $('block-label').textContent = block.path + ' · line ' + line + ' · ' + (block.rich ? 'editable' : 'preserved LaTeX') + (block.owner_id ? ' · owned' : '');
     $('propose-visual').hidden = !block.rich;
@@ -223,7 +223,7 @@
     source = PaperColabEditors.source($('source-host'), PaperColabBlocks.current(parsed, local), (!block.rich && !scientific) || (!directAllowed() && !block.rich), value => {
       sourceDraft = value; sourceDirty=true;
       visual?.setEditable(false,false);
-      draftState(value!==normalise(block.quote));
+      draftState(true);
     });
     sourceDraft = PaperColabBlocks.current(parsed, local);
   }
@@ -240,7 +240,7 @@
     say('Cell saved directly. Other sessions will receive the revision.');
   }
   async function poll() {
-    if(!detail || busy || polling || document.hidden) return;
+    if(!detail || busy || polling) return;
     const id=detail.id, revision=detail.revision, credential=token;
     polling=true;
     try {
@@ -248,7 +248,14 @@
       if(busy || detail?.id!==id || token!==credential || detail.revision!==revision) return;
       if(state.revision!==revision) {
         if(dirty) $('sync-state').textContent='Remote revision '+state.revision+' available. Your local draft is retained; save checks its cell version.';
-        else await openProject(id);
+        else {
+          // Lock editing during the refresh, after checking for any draft
+          // created while the revision request was in flight.
+          busy=true;
+          $('visual-host').inert=$('source-host').inert=true;
+          try {await openProject(id);}
+          finally {busy=false;$('visual-host').inert=$('source-host').inert=false;}
+        }
       }
     } catch(error) {
       $('sync-state').textContent=error.status===403?'Access revoked or unavailable. Local draft retained.':'Sync unavailable. Local draft retained.';
@@ -265,7 +272,8 @@
       PaperColabBlocks.editVisual(parsed, local, draft);
       after = PaperColabBlocks.current(parsed, local);
     } else {
-      const value = source ? source.value() : sourceDraft;
+      const eol=selected.quote.match(/\r\n|\r|\n/)?.[0] ?? fileText.match(/\r\n|\r|\n/)?.[0] ?? '\n';
+      const value = sourceDirty ? source.value().replace(/\n/g,eol) : sourceDraft;
       PaperColabBlocks.editSource(parsed, local, value);
       after = PaperColabBlocks.current(parsed, local);
     }
@@ -277,18 +285,33 @@
     await openProject(detail.id);
   }
 
-  function act(work) {
+  function act(work, allowDraft=false) {
     clear();
-    if(busy || polling) {say('Synchronisation in progress; try again.'); return;}
+    if(busy) {say('Synchronisation in progress; try again.'); return;}
+    if(dirty && !allowDraft) {say('Save, propose or discard the local cell draft before this action.');return;}
     busy=true;
-    Promise.resolve().then(work).catch(fail).finally(()=>{busy=false;});
+    $('visual-host').inert=$('source-host').inert=true;
+    Promise.resolve().then(work).catch(fail).finally(()=>{
+      busy=false;$('visual-host').inert=$('source-host').inert=false;
+    });
   }
 
   $('actor').replaceChildren(...demo.map(([name, value]) => new Option(name, value)));
   $('actor').value = token;
   $('token').value = token;
-  $('actor').onchange = () => { if(dirty && !window.confirm('Discard your local cell draft?')) {$('actor').value=token;return;} token = $('actor').value; sessionStorage.setItem('papercolab-token', token); $('token').value = token; act(refresh); };
-  $('use-token').onclick = () => { if(dirty && !window.confirm('Discard your local cell draft?')) return; token = $('token').value.trim(); sessionStorage.setItem('papercolab-token', token); act(refresh); };
+  function changeToken(next) {
+    if(busy || (dirty && !window.confirm('Discard your local cell draft?'))) {$('actor').value=token;return;}
+    act(async()=>{
+      const previous=detail?.id;
+      destroyEditors(); detail=null; selected=null; fileText='';
+      $('open').hidden=true;
+      token=next;sessionStorage.setItem('papercolab-token',token);$('token').value=token;$('actor').value=token;
+      await refresh();
+      if(projects.some(p=>p.id===previous)) await openProject(previous);
+    },true);
+  }
+  $('actor').onchange = () => changeToken($('actor').value);
+  $('use-token').onclick = () => changeToken($('token').value.trim());
   $('create').onclick = () => act(() => api('POST', '/api/projects', { title: $('new-title').value }).then(project => openProject(project.id)).then(refresh));
   $('example').onclick = () => act(() => api('POST', '/api/projects', { title: 'Estuary field notes', example: true }).then(project => openProject(project.id)));
   $('zip').onchange = event => {
@@ -303,15 +326,15 @@
   };
   $('file').onchange = () => {
     if(dirty && !window.confirm('Discard your local cell draft?')) {$('file').value=selected.path;return;}
-    act(()=>showFile($('file').value));
+    act(()=>showFile($('file').value),true);
   };
-  $('save-direct').onclick=()=>act(saveDirect);
-  $('discard-local').onclick=()=>act(()=>openProject(detail.id));
+  $('save-direct').onclick=()=>act(saveDirect,true);
+  $('discard-local').onclick=()=>act(()=>openProject(detail.id),true);
   $('refresh-manuscript').onclick=()=>act(()=>openProject(detail.id));
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
   setInterval(poll,2500);
-  $('propose-visual').onclick = () => act(() => propose('visual'));
-  $('propose-source').onclick = () => act(() => propose('source'));
+  $('propose-visual').onclick = () => act(() => propose('visual'),true);
+  $('propose-source').onclick = () => act(() => propose('source'),true);
   $('comment').onclick = () => act(async () => {
     const anchor = await api('POST', '/api/projects/' + detail.id + '/anchors', { block_id: selected.stableId });
     await api('POST', '/api/projects/' + detail.id + '/comments', { anchor_id: anchor.id, body: $('comment-body').value });

@@ -1,8 +1,8 @@
 """Self-hosted PaperColab project service.
 
 The server is the authority for membership, suggestions, anchors, evidence and
-releases. Visual and source edits create the same kind of suggestion. Nothing
-changes the manuscript until a person accepts it.
+releases. Visual and source proposals share review records. Human authors may
+also submit explicitly version-checked direct cell edits.
 """
 import json
 import os
