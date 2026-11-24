@@ -92,6 +92,20 @@ class Service:
           context_refs TEXT NOT NULL, token_hash TEXT NOT NULL, created_at INTEGER NOT NULL,
           expires_at INTEGER NOT NULL, status TEXT NOT NULL, suggestion_id TEXT UNIQUE,
           rationale TEXT NOT NULL DEFAULT '');
+        CREATE TABLE IF NOT EXISTS research_workflows (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+          objective TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS workflow_steps (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workflow_id TEXT NOT NULL,
+          position INTEGER NOT NULL, title TEXT NOT NULL, block_id TEXT NOT NULL,
+          assignee_id TEXT NOT NULL, instructions TEXT NOT NULL, criteria TEXT NOT NULL,
+          context_ids TEXT NOT NULL, dependencies TEXT NOT NULL,
+          UNIQUE(workflow_id, position));
+        CREATE TABLE IF NOT EXISTS workflow_attempts (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, step_id TEXT NOT NULL,
+          task_id TEXT NOT NULL UNIQUE, position INTEGER NOT NULL,
+          outcome TEXT, assessment TEXT, evaluated_by TEXT, evaluated_at INTEGER,
+          UNIQUE(step_id, position));
         CREATE TABLE IF NOT EXISTS anchors (
           id TEXT PRIMARY KEY, project_id TEXT NOT NULL, block_id TEXT NOT NULL, quote TEXT NOT NULL,
           actor_id TEXT NOT NULL, created_revision INTEGER NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0);
@@ -319,6 +333,7 @@ class Service:
             "members": members, "blocks": blocks, "suggestions": suggestions, "anchors": anchors,
             "comments": comments, "objects": objects, "links": links, "decisions": decisions, "releases": releases,
             "agent_tasks": self._agent_tasks(project_id) if actor["kind"] == "human" else [],
+            "workflows": self._workflows(project_id) if actor["kind"] == "human" else [],
             "readiness": {"pending_suggestions": len(pending), "unresolved_anchors": len(unresolved),
                           "open_decisions": len(open_decisions),
                           "ready": not pending and not unresolved and not open_decisions},
@@ -557,6 +572,162 @@ class Service:
         return {"revision": revision, "block": next(b for b in self._blocks(project_id, block["path"])
                                                    if b["stableId"] == stable_id)}
 
+    def _workflow_row(self, project_id, workflow_id):
+        row = self.db.execute("SELECT * FROM research_workflows WHERE project_id=? AND id=?",
+                              (project_id, workflow_id)).fetchone()
+        if not row:
+            raise ServiceError(404, "Unknown research workflow.")
+        return row
+
+    def _step_row(self, project_id, workflow_id, step_id):
+        self._workflow_row(project_id, workflow_id)
+        row = self.db.execute("SELECT * FROM workflow_steps WHERE project_id=? AND workflow_id=? AND id=?",
+                              (project_id, workflow_id, step_id)).fetchone()
+        if not row:
+            raise ServiceError(404, "Unknown workflow step.")
+        return row
+
+    def _workflow_text(self, value, label, limit):
+        if not isinstance(value, str) or not value.strip() or len(value) > limit:
+            raise ServiceError(400, label + " is required (maximum " + str(limit) + " characters).")
+        return value.strip()
+
+    def _workflow_ids(self, value, limit):
+        if (not isinstance(value, list) or len(value) > limit
+                or any(not isinstance(x, str) for x in value) or len(set(value)) != len(value)):
+            raise ServiceError(400, "Choose distinct identifiers within the workflow limits.")
+        return value
+
+    def _workflow_view(self, row):
+        steps = []
+        statuses = {}
+        for step in self._rows("SELECT * FROM workflow_steps WHERE workflow_id=? ORDER BY position", (row["id"],)):
+            deps = json.loads(step["dependencies"])
+            attempts = []
+            for attempt in self._rows("SELECT * FROM workflow_attempts WHERE step_id=? ORDER BY position", (step["id"],)):
+                task = self._task_view(self._task_row(attempt["task_id"], row["project_id"]))
+                attempts.append({**dict(attempt), "task_status": task["status"], "suggestion_id": task["suggestion_id"]})
+            last = attempts[-1] if attempts else None
+            if last and last["outcome"] == "pass":
+                status = "completed"
+            elif not all(statuses.get(key) == "completed" for key in deps):
+                status = "blocked"
+            elif not last:
+                status = "ready"
+            elif last["outcome"] == "revise" or last["task_status"] in {"cancelled","expired","rejected","stale","unavailable"}:
+                status = "retry"
+            elif last["task_status"] == "accepted":
+                status = "evaluation"
+            elif last["task_status"] == "pending":
+                status = "review"
+            else:
+                status = "delegated"
+            statuses[step["id"]] = status
+            steps.append({**dict(step), "context_ids": json.loads(step["context_ids"]),
+                          "dependencies": deps, "status": status, "attempts": attempts})
+        return {**dict(row), "steps": steps, "completed": sum(x["status"]=="completed" for x in steps)}
+
+    def _workflows(self, project_id):
+        return [self._workflow_view(row) for row in self._rows(
+            "SELECT * FROM research_workflows WHERE project_id=? ORDER BY created_at DESC,rowid DESC", (project_id,))]
+
+    def create_workflow(self, actor, project_id, title, objective):
+        self.require(actor, project_id, "members")
+        title = self._workflow_text(title, "Workflow title", 200)
+        objective = self._workflow_text(objective, "Research objective", 4000)
+        if self.db.execute("SELECT count(*) FROM research_workflows WHERE project_id=?", (project_id,)).fetchone()[0] >= 25:
+            raise ServiceError(409, "Workflow limit reached for this prototype.")
+        key = str(uuid.uuid4())
+        with self.db:
+            self.db.execute("INSERT INTO research_workflows VALUES (?,?,?,?,?,?)",
+                            (key, project_id, title, objective, actor["id"], self.now()))
+            self._audit(actor["id"], "create-workflow", project_id, {"workflow": key})
+        return self._workflow_view(self._workflow_row(project_id, key))
+
+    def add_workflow_step(self, actor, project_id, workflow_id, data):
+        self.require(actor, project_id, "members")
+        self._workflow_row(project_id, workflow_id)
+        if not isinstance(data, dict) or set(data) != {
+                "title","block_id","assignee_id","instructions","criteria","context_ids","dependencies"}:
+            raise ServiceError(400, "Provide title, target, assistant, instructions, criteria, context and dependencies.")
+        title = self._workflow_text(data["title"], "Step title", 200)
+        instructions = self._workflow_text(data["instructions"], "Instructions", 2400)
+        criteria = self._workflow_text(data["criteria"], "Acceptance criteria", 1200)
+        target, assignee = data["block_id"], data["assignee_id"]
+        if not isinstance(target, str) or not isinstance(assignee, str):
+            raise ServiceError(400, "Choose a target and assistant.")
+        if not self._block_row(project_id, target)["rich"]:
+            raise ServiceError(400, "Choose an editable cell.")
+        account = self.db.execute("SELECT * FROM actors WHERE id=?", (assignee,)).fetchone()
+        if not account or account["kind"] != "assistant":
+            raise ServiceError(400, "Choose an assistant member.")
+        self.require(self._actor(account), project_id, "propose")
+        context = self._workflow_ids(data["context_ids"], 12)
+        for key in context:
+            if not self.db.execute("SELECT 1 FROM objects WHERE id=? AND project_id=?", (key, project_id)).fetchone():
+                raise ServiceError(404, "Unknown context object.")
+        deps = self._workflow_ids(data["dependencies"], 20)
+        existing = self._rows("SELECT id FROM workflow_steps WHERE workflow_id=? ORDER BY position", (workflow_id,))
+        if len(existing) >= 50:
+            raise ServiceError(409, "Workflow step limit reached.")
+        # Append-only dependency edges to existing steps in this workflow.
+        # This construction rules out cycles and cross-workflow dependencies.
+        if not set(deps) <= {x["id"] for x in existing}:
+            raise ServiceError(400, "Dependencies must be earlier steps in this workflow.")
+        key = str(uuid.uuid4())
+        with self.db:
+            self.db.execute("INSERT INTO workflow_steps VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (key, project_id, workflow_id, len(existing)+1, title, target, assignee, instructions,
+                 criteria, json.dumps(context), json.dumps(deps)))
+            self._audit(actor["id"], "plan-workflow-step", project_id, {"workflow":workflow_id,"step":key,"dependencies":deps})
+        return self._workflow_view(self._workflow_row(project_id, workflow_id))
+
+    def launch_workflow_step(self, actor, project_id, workflow_id, step_id):
+        self.require(actor, project_id, "members")
+        step = self._step_row(project_id, workflow_id, step_id)
+        view = next(x for x in self._workflow_view(self._workflow_row(project_id, workflow_id))["steps"] if x["id"] == step_id)
+        if view["status"] not in {"ready","retry"}:
+            raise ServiceError(409, "Step is not ready; prerequisite evaluations and active attempts must be resolved.")
+        if len(view["attempts"]) >= 10:
+            raise ServiceError(409, "Step attempt limit reached.")
+        # Existing task API pins current inputs at launch, not plan creation.
+        # No implicit context from predecessor outputs is sent to the model.
+        # The task and attempt linkage commit in the same transaction.
+        return self.create_agent_task(actor, project_id, step["block_id"], step["assignee_id"],
+            step["instructions"] + "\n\nAcceptance criteria:\n" + step["criteria"],
+            json.loads(step["context_ids"]), workflow_step=step_id)
+
+    def evaluate_workflow_step(self, actor, project_id, workflow_id, step_id, attempt_id, outcome, assessment):
+        self.require(actor, project_id, "decide")
+        self._step_row(project_id, workflow_id, step_id)
+        if not isinstance(outcome, str) or outcome not in {"pass","revise"}:
+            raise ServiceError(400, "Choose pass or revise.")
+        assessment = self._workflow_text(assessment, "Evaluation assessment", 4000)
+        view = next(x for x in self._workflow_view(self._workflow_row(project_id, workflow_id))["steps"] if x["id"] == step_id)
+        last = view["attempts"][-1] if view["attempts"] else None
+        if view["status"] != "evaluation" or not last or last["id"] != attempt_id:
+            raise ServiceError(409, "Only the latest accepted attempt can be evaluated once.")
+        # Evaluation is a distinct checkpoint. A pass must attest to the
+        # accepted cell, not a later unseen edit or a removed target.
+        if outcome == "pass":
+            task = self._task_row(last["task_id"], project_id)
+            suggestion = self._suggestion(task["suggestion_id"])
+            block = self._block_row(project_id, task["block_id"])
+            if block["quote"] != suggestion["after"] or block["version"] != task["cell_version"]+1:
+                raise ServiceError(409, "Accepted cell changed since this attempt; request revision instead.")
+            for ref in json.loads(task["context_refs"]):
+                obj = self.db.execute("SELECT revision FROM objects WHERE project_id=? AND id=?",
+                                      (project_id, ref["id"])).fetchone()
+                if not obj or obj["revision"] != ref["revision"]:
+                    raise ServiceError(409, "Pinned evidence changed; request revision instead.")
+        with self.db:
+            self.db.execute("""UPDATE workflow_attempts SET outcome=?,assessment=?,evaluated_by=?,evaluated_at=?
+                               WHERE id=? AND outcome IS NULL""",
+                            (outcome, assessment, actor["id"], self.now(), attempt_id))
+            self._audit(actor["id"], "evaluate-workflow-step", project_id,
+                        {"workflow":workflow_id,"step":step_id,"attempt":attempt_id,"outcome":outcome,"assessment":assessment})
+        return self._workflow_view(self._workflow_row(project_id, workflow_id))
+
     def _task_row(self, task_id, project_id=None):
         sql = "SELECT * FROM agent_tasks WHERE id=?"
         args = [task_id]
@@ -614,7 +785,7 @@ class Service:
             raise ServiceError(400, "Delegated context exceeds 256 KiB. Choose fewer or smaller objects.")
         return actor, block, payload
 
-    def create_agent_task(self, actor, project_id, block_id, assignee_id, instructions, context_ids):
+    def create_agent_task(self, actor, project_id, block_id, assignee_id, instructions, context_ids, workflow_step=None):
         self.require(actor, project_id, "members")
         if actor["kind"] != "human" or not self.policy()["allow_ai"]:
             raise ServiceError(403, "Human leads can delegate only when AI proposals are enabled.")
@@ -653,8 +824,14 @@ class Service:
                  context_refs,token_hash,created_at,expires_at,status)
                 VALUES (:id,:project_id,:block_id,:assignee_id,:created_by,:instructions,:base_revision,:cell_version,
                         :before_quote,:context_refs,:token_hash,:created_at,:expires_at,:status)""", record)
+            if workflow_step is not None:
+                position = self.db.execute("SELECT count(*) FROM workflow_attempts WHERE step_id=?", (workflow_step,)).fetchone()[0]+1
+                self.db.execute("""INSERT INTO workflow_attempts
+                    (id,project_id,step_id,task_id,position) VALUES (?,?,?,?,?)""",
+                    (str(uuid.uuid4()), project_id, workflow_step, task_id, position))
             self._audit(actor["id"], "delegate-task", project_id,
-                        {"task": task_id, "cell": block_id, "assignee": assignee_id, "context": refs})
+                        {"task": task_id, "cell": block_id, "assignee": assignee_id, "context": refs,
+                         "workflow_step": workflow_step})
         return {"task": self._task_view(self._task_row(task_id)), "token": secret}
 
     def _authorise_task(self, task_id, token):
@@ -1190,7 +1367,7 @@ class Service:
         return {"removed": removed}
 
     def _delete_project(self, project_id):
-        for table in ("members", "blocks", "files", "suggestions", "anchors", "comments", "links", "decisions", "crdt_cells", "agent_tasks"):
+        for table in ("members", "blocks", "files", "suggestions", "anchors", "comments", "links", "decisions", "crdt_cells", "agent_tasks", "workflow_attempts", "workflow_steps", "research_workflows"):
             self.db.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
         self.db.execute("DELETE FROM object_versions WHERE object_id IN (SELECT id FROM objects WHERE project_id = ?)", (project_id,))
         self.db.execute("DELETE FROM objects WHERE project_id = ?", (project_id,))

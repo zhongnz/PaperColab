@@ -133,6 +133,31 @@
           </div>
         </div>
       </section>
+      <section class="panel" id="workflow-panel" hidden>
+        <h2>Research workflows</h2>
+        <p class="muted">Plan several scoped research steps. Prerequisites require accepted contributions and an explicit human evaluation. Launch and retry are manual.</p>
+        <div id="workflow-form" hidden>
+          <label for="workflow-title">Workflow title</label>
+          <input id="workflow-title" maxlength="200" style="width:100%">
+          <label for="workflow-objective">Research objective</label>
+          <textarea id="workflow-objective" rows="3" maxlength="4000" style="width:100%"></textarea>
+          <button type="button" id="create-workflow">Create research workflow</button>
+          <label for="workflow-select">Workflow to extend</label>
+          <select id="workflow-select" style="max-width:100%"></select>
+          <div id="workflow-step-form" hidden>
+            <label for="workflow-step-title">Step title</label>
+            <input id="workflow-step-title" maxlength="200" style="width:100%">
+            <label for="workflow-cell">Target cell</label><select id="workflow-cell" style="max-width:100%"></select>
+            <label for="workflow-assistant">Assistant</label><select id="workflow-assistant"></select>
+            <label for="workflow-context">Explicit context objects</label><select id="workflow-context" multiple size="4" style="width:100%"></select>
+            <label for="workflow-dependencies">Prerequisite steps (optional)</label><select id="workflow-dependencies" multiple size="4" style="width:100%"></select>
+            <label for="workflow-instructions">Step instructions</label><textarea id="workflow-instructions" rows="3" maxlength="2400" style="width:100%"></textarea>
+            <label for="workflow-criteria">Acceptance criteria</label><textarea id="workflow-criteria" rows="3" maxlength="1200" style="width:100%"></textarea>
+            <button type="button" id="add-workflow-step">Add workflow step</button>
+          </div>
+        </div>
+        <div id="workflow-list" class="stack"></div>
+      </section>
       <section class="panel" id="agent-tasks" hidden>
         <h2>AI task delegation</h2>
         <p class="muted">Assign one editable cell and explicitly selected research context. Restricted credentials permit one proposal, never direct manuscript edits. No model is called automatically.</p>

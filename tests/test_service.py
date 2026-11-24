@@ -355,6 +355,76 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(err.exception.status,403)
         self.assertEqual(paragraph(s,a["bao"],p)["quote"],block["quote"])
 
+    def test_research_workflow_dependencies_evaluation_and_retry(self):
+        s,p,a=self.service,self.project,self.actors
+        cell=paragraph(s,a["bao"],p)
+        note=s.add_object(a["ada"],p,"note","Workflow evidence","Three readings.")
+        w=s.create_workflow(a["ada"],p,"Methods revision","Review evidence before updating methods.")
+        def data(title,deps):
+            return {"title":title,"block_id":cell["stableId"],"assignee_id":a["quill"]["id"],
+                    "instructions":"Use the supplied evidence.","criteria":"No invented observations.",
+                    "context_ids":[note["id"]],"dependencies":deps}
+        def add(title,deps):
+            return s.add_workflow_step(a["ada"],p,w["id"],data(title,deps))
+        def view():
+            return next(x for x in s.project(a["ada"],p)["workflows"] if x["id"]==w["id"])
+        first=add("Review evidence",[])["steps"][0]
+        second=add("Refine methods",[first["id"]])["steps"][1]
+        with self.assertRaises(ServiceError) as err:
+            add("Invalid dependency",["foreign-id"])
+        self.assertEqual(err.exception.status,400)
+        self.assertEqual([x["status"] for x in view()["steps"]],["ready","blocked"])
+        def launch(step,who="ada"):
+            return s.launch_workflow_step(a[who],p,w["id"],step["id"])
+        for step,who,code in [(second,"ada",409),(first,"quill",403),(first,"bao",403)]:
+            with self.assertRaises(ServiceError) as err:
+                launch(step,who)
+            self.assertEqual(err.exception.status,code)
+        created=launch(first)
+        with self.assertRaises(ServiceError):
+            launch(first)
+        self.assertIn("Acceptance criteria:",s.delegated_context(created["task"]["id"],created["token"])["instructions"])
+        def submit(task,old,new):
+            ctx=s.delegated_context(task["task"]["id"],task["token"])
+            return s.delegated_proposal(task["task"]["id"],task["token"],
+                ctx["cell"]["source"].replace(old,new),"Use evidence.",[note["id"]])["suggestion"]
+        suggestion=submit(created,"two readings","three readings")
+        self.assertEqual(view()["steps"][0]["status"],"review")
+        s.accept(a["iris"],p,suggestion["id"])
+        self.assertEqual([x["status"] for x in view()["steps"]],["evaluation","blocked"])
+        attempt=view()["steps"][0]["attempts"][-1]
+        def evaluate(step,attempt,outcome,who="iris"):
+            return s.evaluate_workflow_step(a[who],p,w["id"],step["id"],attempt["id"],outcome,"Checked criteria.")
+        with self.assertRaises(ServiceError):
+            evaluate(first,attempt,"pass","quill")
+        evaluate(first,attempt,"pass")
+        self.assertEqual([x["status"] for x in view()["steps"]],["completed","ready"])
+        with self.assertRaises(ServiceError):
+            evaluate(first,attempt,"pass")
+        task=launch(second)
+        self.assertIn("three readings",s.delegated_context(task["task"]["id"],task["token"])["cell"]["source"])
+        s.cancel_agent_task(a["ada"],p,task["task"]["id"])
+        self.assertEqual(view()["steps"][1]["status"],"retry")
+        task=launch(second)
+        suggestion=submit(task,"three readings","four readings")
+        s.accept(a["iris"],p,suggestion["id"])
+        attempt=view()["steps"][1]["attempts"][-1]
+        evaluate(second,attempt,"revise")
+        self.assertEqual(view()["steps"][1]["status"],"retry")
+        task=launch(second)
+        suggestion=submit(task,"four readings","five readings")
+        s.accept(a["iris"],p,suggestion["id"])
+        attempt=view()["steps"][1]["attempts"][-1]
+        evaluate(second,attempt,"pass")
+        self.assertEqual(view()["completed"],2)
+        self.assertEqual(len(view()["steps"][1]["attempts"]),3)
+        self.assertNotIn(task["token"],json.dumps(view()))
+        self.assertEqual(s.project(a["quill"],p)["workflows"],[])
+        path=s.path
+        s.close()
+        self.service=Service(path)
+        self.assertEqual(self.service.project(a["ada"],p)["workflows"][0]["completed"],2)
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")

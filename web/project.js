@@ -236,6 +236,7 @@
     $('actor').disabled=$('use-token').disabled=value;
     $('create-agent-task').disabled=value||!$('delegate-cell').options.length||!$('delegate-assistant').options.length;
     $('refresh-agent-tasks').disabled=value;
+    $('workflow-panel').inert=value;
     $('durable-drafts').disabled=value||dirty;
     $('local-recovery').inert=value;
     updateTransportControl();
@@ -310,6 +311,7 @@
     if(live&&live.project!==id)stopLive();
     if(detail?.id!==id){
       $('delegate-instructions').value='';
+      for(const key of ['workflow-title','workflow-objective','workflow-step-title','workflow-instructions','workflow-criteria'])$(key).value='';
       $('delegated-token').value='';$('delegated-credential').hidden=true;
       for(const option of $('delegate-context').options)option.selected=false;
     }
@@ -339,6 +341,7 @@
     select.value = files.some(file => file.path === previous) ? previous : (files.find(file => /methods/.test(file.path)) || files[0])?.path || '';
     renderQueue();
     renderAgentTasks();
+    renderWorkflows();
     renderLibrary();
     renderDecisions();
     renderReleases();
@@ -347,6 +350,98 @@
     liveControl();presenceChanged();
   }
 
+  function workflowOptions(){
+    const chosen=(detail.workflows??[]).find(w=>w.id===$('workflow-select').value);
+    const deps=$('workflow-dependencies'), prior=[...deps.selectedOptions].map(o=>o.value);
+    deps.replaceChildren();
+    for(const step of chosen?.steps??[])deps.append(new Option(step.position+'. '+step.title,step.id));
+    for(const o of deps.options)o.selected=prior.includes(o.value);
+    $('workflow-step-form').hidden=!chosen;
+  }
+  function renderWorkflows(){
+    const host=$('workflow-list'), selector=$('workflow-select'), prior=selector.value;
+    $('workflow-panel').hidden=me.kind!=='human';
+    $('workflow-form').hidden=role()!=='lead'||me.kind!=='human';
+    host.replaceChildren();selector.replaceChildren();
+    for(const w of detail.workflows??[])selector.append(new Option(w.title,w.id));
+    if([...selector.options].some(o=>o.value===prior))selector.value=prior;
+    for(const [dest,src] of [['workflow-cell','delegate-cell'],['workflow-assistant','delegate-assistant'],['workflow-context','delegate-context']]){
+      const target=$(dest),selected=[...target.selectedOptions].map(o=>o.value);
+      target.replaceChildren(...[...$(src).options].map(o=>new Option(o.textContent,o.value)));
+      if(selected.length)for(const option of target.options)option.selected=selected.includes(option.value);
+    }
+    workflowOptions();
+    for(const w of detail.workflows??[]){
+      const card=document.createElement('article'),title=document.createElement('h3'),objective=document.createElement('p');
+      title.textContent=w.title+' · '+w.completed+'/'+w.steps.length+' evaluated';
+      objective.textContent=w.objective;card.append(title,objective);
+      for(const step of w.steps){
+        const row=document.createElement('section');row.className='workflow-step';row.dataset.stepId=step.id;
+        const heading=document.createElement('strong'),meta=document.createElement('p'),criteria=document.createElement('p');
+        heading.textContent=step.position+'. '+step.title+' · '+step.status;
+        meta.textContent='Depends on: '+(step.dependencies.map(id=>w.steps.find(s=>s.id===id)?.title??id).join(', ')||'None');
+        criteria.textContent='Acceptance criteria: '+step.criteria;
+        row.append(heading,meta,criteria);
+        for(const attempt of step.attempts){
+          const history=document.createElement('p');
+          history.className='muted';
+          history.textContent='Attempt '+attempt.position+' · '+attempt.task_status+(attempt.outcome?' · '+attempt.outcome+': '+attempt.assessment:'');
+          row.append(history);
+        }
+        const endpoint='/api/projects/'+detail.id+'/workflows/'+w.id+'/steps/'+step.id;
+        if(role()==='lead'&&['ready','retry'].includes(step.status)){
+          const launch=document.createElement('button');launch.type='button';launch.textContent='Launch step';
+          launch.onclick=()=>act(async()=>{
+            const result=await api('POST',endpoint+'/launch');
+            await openProject(detail.id);
+            $('delegated-task-id').textContent=result.task.id;
+            $('delegated-token').value=result.token;$('delegated-credential').hidden=false;
+            $('delegated-credential').scrollIntoView({block:'nearest'});
+            say('Workflow step delegated. Copy its restricted credential now.');
+          });
+          row.append(launch);
+        }
+        if(canDecide()&&step.status==='evaluation'){
+          const label=document.createElement('label'), assessment=document.createElement('textarea');
+          label.textContent='Evaluate against acceptance criteria';
+          assessment.rows=3;assessment.maxLength=4000;assessment.setAttribute('aria-label','Assessment for '+step.title);
+          label.append(assessment);row.append(label);
+          for(const [outcome,name] of [['pass','Pass evaluation'],['revise','Request another attempt']]){
+            const button=document.createElement('button');button.type='button';button.textContent=name;
+            button.onclick=()=>act(async()=>{
+              await api('POST',endpoint+'/evaluate',{attempt_id:step.attempts.at(-1).id,outcome,assessment:assessment.value});
+              await openProject(detail.id);say('Workflow evaluation recorded.');
+            });
+            row.append(button);
+          }
+        }
+        card.append(row);
+      }
+      host.append(card);
+    }
+    if(!host.children.length)host.textContent='No research workflows yet.';
+  }
+  $('workflow-select').onchange=workflowOptions;
+  $('create-workflow').onclick=()=>act(async()=>{
+    const result=await api('POST','/api/projects/'+detail.id+'/workflows',{
+      title:$('workflow-title').value,objective:$('workflow-objective').value});
+    await openProject(detail.id);
+    $('workflow-select').value=result.id;workflowOptions();
+    $('workflow-title').value=$('workflow-objective').value='';
+    say('Research workflow created.');
+  });
+  $('add-workflow-step').onclick=()=>act(async()=>{
+    await api('POST','/api/projects/'+detail.id+'/workflows/'+$('workflow-select').value+'/steps',{
+      title:$('workflow-step-title').value,block_id:$('workflow-cell').value,assignee_id:$('workflow-assistant').value,
+      instructions:$('workflow-instructions').value,criteria:$('workflow-criteria').value,
+      context_ids:[...$('workflow-context').selectedOptions].map(o=>o.value),
+      dependencies:[...$('workflow-dependencies').selectedOptions].map(o=>o.value)
+    });
+    await openProject(detail.id);
+    for(const id of ['workflow-step-title','workflow-instructions','workflow-criteria'])$(id).value='';
+    for(const o of $('workflow-dependencies').options)o.selected=false;
+    say('Workflow step added.');
+  });
   function renderAgentTasks(){
     const form=$('delegate-form'),host=$('agent-task-list');
     $('delegated-credential').hidden=true;$('delegated-token').value='';
@@ -830,6 +925,7 @@
       stopLive();$('live-enabled').checked=false;
       closeRecovery();$('durable-drafts').checked=false;storageMessage('');storageFailed=false;
       $('delegated-token').value='';$('delegated-credential').hidden=true;$('delegate-instructions').value='';
+      for(const key of ['workflow-title','workflow-objective','workflow-step-title','workflow-instructions','workflow-criteria'])$(key).value='';
       destroyEditors(); detail=null; selected=null; fileText='';
       $('crdt-enabled').checked=false;updateTransportControl();
       $('open').hidden=true;
