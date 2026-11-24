@@ -30,13 +30,21 @@ def sha(path):
 
 def build_diagnostic(text):
     """Return a fixed diagnostic category, never arbitrary TeX log content."""
-    text = text.lower()
+    # Ignore latexmk command echoes and normal TeX engine status lines.
+    # In the previous run "-no-shell-escape" was misclassified as a
+    # shell-escape requirement on all eight failed original builds.
+    lines = [line for line in text.lower().splitlines()
+             if not re.search(r"^\s*(?:running |command line |latexmk: applying rule|restricted \\write18 enabled|\\write18 disabled|entering extended mode)",line)
+             and not re.search(r"^\s*(?:pdflatex|xelatex|lualatex|latexmk)\s",line)]
+    text = "\n".join(lines)
     patterns = (
-        ("missing-bibliography-data", r"i couldn't open database file|couldn't open style file|no file .{0,160}\.bbl|bibtex.{0,80}(?:failed|error)"),
+        ("missing-bibliography-data", r"i couldn't open database file|couldn't open style file|bibtex.{0,80}(?:failed|error)|bibliography file .{0,120}(?:not found|missing)|(?:bibtex|biber).{0,100}cannot find"),
         ("missing-file", r"(?:latex|package .{0,80}) error: file .{0,200}not found|i can't find file|file .{0,200}not found"),
-        ("shell-escape-required", r"shell.escape|write18|pygmentize"),
+        ("shell-escape-required", r"(?:requires?|must (?:enable|use)|need(?:s|ed)?) [^\n]{0,80}(?:shell.escape|write18)|(?:shell.escape|write18) [^\n]{0,60}(?:required|not enabled|must be enabled)|(?:minted|pygmentize)[^\n]{0,120}(?:not installed|not found|disabled)"),
         ("font-or-engine", r"fontspec error|requires.{0,100}(?:xelatex|lualatex)|font .{0,100}not found"),
         ("undefined-control-sequence", r"undefined control sequence"),
+        ("tex-input-syntax", r"runaway argument|file ended while scanning|extra \\\\endgroup|missing \\} inserted|emergency stop"),
+        ("graphics-format", r"unknown graphics extension|cannot determine size of graphic|error converting .*?\\.(?:eps|pdf)|pdftex error.*?image"),
         ("resource-or-time-limit", r"exceeded the 120-second limit|capacity exceeded|out of memory|oom killed"),
         ("unsafe-archive", r"unsafe or conflicting archive path|special file|unsupported archive|exceeds 256 mib"),
         ("latex-error", r"latex error|package .{0,100} error|fatal error"),
@@ -104,11 +112,31 @@ def fetch_source(url, target):
         raise
 
 
-def root_for(report, override=None):
+def title_words(value):
+    return re.findall(r"[^\W_]+",value.casefold(),flags=re.UNICODE)
+
+
+def root_for(report, override=None, expected_title=None):
     roots = report["roots"]
     if override:
         return next((row for row in roots if row["root"] == override), None)
-    return roots[0] if len(roots) == 1 else None
+    if len(roots) == 1:
+        return roots[0]
+    # Compare against the pre-existing pinned bibliographic title, not
+    # filename or best compilation/coverage result. Unique literal title
+    # prefix, class and body are all required. Never guess on a tie.
+    expected=title_words(expected_title or "")
+    if not expected:
+        return None
+    candidates=[]
+    for row in roots:
+        evidence=row.get("rootEvidence",{})
+        if not evidence.get("hasClass") or not evidence.get("hasBody"):
+            continue
+        titles=evidence.get("titles",[])
+        if len(titles)==1 and title_words(titles[0])[:len(expected)]==expected:
+            candidates.append(row)
+    return candidates[0] if len(candidates)==1 else None
 
 
 def marker_present(text):
@@ -157,13 +185,15 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
         stage="inventory"
         report=json.loads(run(["node","corpus/check.cjs",str(archive)],timeout=90))
         result["roots"]=[x["root"] for x in report["roots"]]
-        result["root_candidates"]=[{"root":x["root"],"coverage":x["coverage"],"counts":x["counts"]} for x in report["roots"]]
-        selected=root_for(report,override)
+        result["root_candidates"]=[{"root":x["root"],"coverage":x["coverage"],"counts":x["counts"],
+                                    "root_evidence":x.get("rootEvidence",{})} for x in report["roots"]]
+        selected=root_for(report,override,paper["short_title"])
         if not selected:
             result["status"]="root-unresolved"
             return result
         root=selected["root"]
-        result.update(root=root,coverage=selected["coverage"],static_counts=selected["counts"])
+        result.update(root=root,coverage=selected["coverage"],static_counts=selected["counts"],
+                      root_selection="reviewed-override" if override else "unique-candidate" if len(report["roots"])==1 else "literal-title-match")
         engine=paper.get("engine") or "pdflatex"
         result["engine"]=engine
         stage="baseline-build"

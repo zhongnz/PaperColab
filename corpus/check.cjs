@@ -47,7 +47,9 @@ async function check(filename) {
     const counts = { found: 0, toolchain: 0, review: 0, missing: 0 };
     for (const ref of references) counts[ref.status]++;
     const coverage = manuscriptCoverage(data, root, sources);
-    return { root, sources, counts, notes, coverage };
+    const parsed=data.parsed.get(root);
+    return { root, sources, counts, notes, coverage,
+      rootEvidence:{hasClass:parsed.hasClass,hasBody:parsed.hasBody,titles:parsed.titles} };
   });
   return { name: path.basename(filename), sha256: createHash('sha256').update(bytes).digest('hex'),
     files: data.files.size, roots, archiveFindings: data.notes, pdfBuild: 'not-run', roundTrip: 'not-run' };

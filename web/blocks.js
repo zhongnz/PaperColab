@@ -8,6 +8,8 @@
   const inlineRefs = new Set(['cite', 'citep', 'citet', 'citealt', 'citealp',
     'citeauthor', 'citeyear', 'citeyearpar', 'citetalias', 'citepalias',
     'ref', 'eqref', 'pageref', 'autoref', 'nameref', 'cref', 'Cref']);
+  const opaqueText = new Set(['footnote', 'texttt', 'textsc', 'underline', 'mbox']);
+  const optionalCitations = new Set(['cite', 'citep', 'citet', 'citealt', 'citealp', 'citeauthor', 'citeyear', 'citeyearpar']);
   const marks = { textbf: 'bold', emph: 'italic', textit: 'italic' };
   const escaped = { '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}', '\u00a0': '~' };
   for (const ch of '#$%&_{}') escaped[ch] = '\\' + ch;
@@ -69,6 +71,24 @@
       if (name.length === 1 && '#$%&_{}'.includes(name) && raw(node) === '\\' + name) {
         append({ type: 'text', text: name }); continue;
       }
+      // A bounded run of adjacent AST nodes may encode natbib optional
+      // notes before the key group. Only literal notes are recognised.
+      // Keep the entire expression opaque and byte-exact.
+      if (optionalCitations.has(name) && next?.type !== 'group') {
+        const after = node.position.end.offset;
+        let j = i + 1;
+        while (j < nodes.length && j <= i + 32 && nodes[j].type !== 'group' &&
+               ['string','whitespace'].includes(nodes[j].type) &&
+               nodes[j].position.start.offset === nodes[j-1].position.end.offset) j++;
+        const key = nodes[j];
+        if (j > i + 1 && j <= i + 32 && key?.type === 'group' &&
+            key.position.start.offset === nodes[j-1].position.end.offset &&
+            /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(raw(key)) &&
+            /^(?:\[[A-Za-z0-9 .,:;!?()~+/'-]{1,120}\]){1,2}$/.test(slice(after,key.position.start.offset))) {
+          append({type:'texToken',attrs:{latex:slice(node.position.start.offset,key.position.end.offset)}});
+          i = j; continue;
+        }
+      }
       if (next?.type !== 'group' || node.position.end.offset !== next.position.start.offset) return fail(name);
       if (Object.hasOwn(namedEscapes, name) && !next.content.length) {
         append({ type: 'text', text: namedEscapes[name] });
@@ -83,6 +103,8 @@
           append(child);
         }
       } else if ((inlineRefs.has(name) && /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(raw(next))) ||
+                 (name === 'label' && /^\{[A-Za-z0-9_.:/+-]+\}$/.test(raw(next))) ||
+                 (opaqueText.has(name) && /^\{[^\\{}$%&#_^~\r\n\x00-\x1f]{1,500}\}$/.test(raw(next))) ||
                  (name === 'url' && /^\{https?:\/\/[A-Za-z0-9.\-/:?=+_~#]+\}$/.test(raw(next)))) {
         append({ type: 'texToken', attrs: { latex: slice(node.position.start.offset, next.position.end.offset) } });
       } else return fail(name);

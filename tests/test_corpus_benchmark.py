@@ -80,6 +80,20 @@ class CorpusBenchmarkTests(unittest.TestCase):
             ("Package fontspec Error: requires XeLaTeX","font-or-engine"),
             ("Undefined control sequence.","undefined-control-sequence"),
             ("Build interrupted or exceeded the 120-second limit.","resource-or-time-limit"),
+            ("Running 'pdflatex -no-shell-escape main.tex'\n! Undefined control sequence.","undefined-control-sequence"),
+            ("restricted \\write18 enabled.\nSome unrelated output","unclassified"),
+            ("Package minted Error: You must enable shell escape.","shell-escape-required"),
+            ("No file main.bbl.\n! LaTeX Error: File missing.sty not found.","missing-file"),
             ("some manuscript content","unclassified")]
         for message,expected in cases:
             self.assertEqual(build_diagnostic(message),expected)
+
+    def test_root_requires_unique_literal_title_and_body(self):
+        def row(root,title,body=True):
+            return {"root":root,"rootEvidence":{"hasClass":True,"hasBody":body,"titles":[title]}}
+        report={"roots":[row("notes.tex","Notes"),row("actual.tex","Model-Agnostic Meta-Learning for Fast Adaptation")]}
+        self.assertEqual(root_for(report,expected_title="Model-Agnostic Meta-Learning")["root"],"actual.tex")
+        report["roots"].append(row("copy.tex","Model-Agnostic Meta-Learning"))
+        self.assertIsNone(root_for(report,expected_title="Model-Agnostic Meta-Learning"))
+        report["roots"][-1]["rootEvidence"]["hasBody"]=False
+        self.assertEqual(root_for(report,expected_title="Model-Agnostic Meta-Learning")["root"],"actual.tex")

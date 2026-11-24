@@ -138,12 +138,9 @@ test('coverage counts editable blocks and names the command that preserved a par
   assert.equal(B.exportText(file), source);
   const report = B.coverage(file);
   assert.equal(report.editableHeadings, 1);
-  assert.equal(report.editableParagraphs, 1);
-  assert.equal(report.fallbackParagraphs, 2);
-  assert.equal(report.editableBlocks, 2);
-  const commands = Object.fromEntries(report.fallbackCommands.map(item => [item.command, item.blocks]));
-  assert.equal(commands.footnote, 1);
-  assert.equal(commands.cite, 1);
+  assert.equal(report.editableParagraphs, 3);
+  assert.equal(report.fallbackParagraphs, 0);
+  assert.equal(report.editableBlocks, 4);
 });
 
 test('editing prose preserves multiline math tokens, textit semantics and raw macro definitions', () => {
@@ -287,10 +284,22 @@ test('single-argument citation variants and literal URLs remain protected throug
   B.editVisual(file,p,append(p.rich,' Extra.'));
   assert.equal(B.exportText(file),source+' Extra.');
   assert.deepEqual(B.tokens(B.parseFile(B.exportText(file)).blocks[0].rich),B.tokens(p.rich));
-  for(const unsafe of ['\\citealt[see]{a}','\\citealt{\\macro}','\\url{https://example.org/a%20b}','\\custom{a}']){
+  for(const unsafe of ['\\citealt[\\macro]{a}','\\citealt{\\macro}','\\url{https://example.org/a%20b}','\\custom{a}']){
     assert.equal(B.parseFile('See '+unsafe+'.').blocks[0].kind,'raw');
   }
   const raw=B.coverage(B.parseFile('\\iftrue unsafe\\fi'));
   assert.equal(raw.fullFileFallback,true);
   assert.match(raw.fullFileReason,/conditional|delimiter/i);
+});
+
+test('literal optional citation notes and simple opaque inline text retain exact source', () => {
+  const s=tex`A \footnote{Plain note.} and \citep[see][p.~3]{key}, \texttt{model-v1}, \textsc{Method}, \label{sec:one}.`;
+  const file=B.parseFile(s),p=file.blocks[0];
+  assert.equal(p.kind,'paragraph');
+  assert.deepEqual(B.tokens(p.rich),[tex`\footnote{Plain note.}`,tex`\citep[see][p.~3]{key}`,tex`\texttt{model-v1}`,tex`\textsc{Method}`,tex`\label{sec:one}`]);
+  B.editVisual(file,p,append(p.rich,' Done.'));
+  assert.equal(B.exportText(file),s+' Done.');
+  for(const raw of [tex`\footnote{With \input{other}}`,tex`\citep[\custom]{key}`,tex`\texttt{a_b}`]){
+    assert.equal(B.parseFile('See '+raw+'.').blocks[0].kind,'raw');
+  }
 });

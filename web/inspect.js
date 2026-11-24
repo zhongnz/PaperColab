@@ -34,13 +34,20 @@
 
   function scan(source) {
     const clean = maskLiterals(source);
-    let document = false;
+    let document = false, hasClass = false, hasBody = false;
+    const titles = [];
     const commands = /\\([a-zA-Z@]+|[^\n])/g;
     const refs = [], paths = [];
     let match, line = 1, cursor = 0, truncated = false;
     while ((match = commands.exec(clean))) {
       const name = match[1];
-      if (name === 'begin' && /^\s*\{document\}/.test(clean.slice(commands.lastIndex, commands.lastIndex + 80))) document = true;
+      if (name === 'begin' && /^\s*\{document\}/.test(clean.slice(commands.lastIndex, commands.lastIndex + 80))) document = hasBody = true;
+      if (name === 'title' && titles.length < 8) {
+        const t = group(clean, skipSpaces(clean,commands.lastIndex), '{','}');
+        // A title is evidence for root selection only when it is literal.
+        // Do not strip arbitrary macros or infer their expansion.
+        if (t?.value && t.value.length <= 300 && /^[\p{L}\p{N}\s:;,.'’()?!&–—-]+$/u.test(t.value)) titles.push(t.value.replace(/\s+/g,' ').trim());
+      }
       if (!Object.hasOwn(extensions, name) && name !== 'graphicspath') continue;
       if (refs.length + paths.length >= 4000) { truncated = true; break; }
       for (; cursor < match.index; cursor++) if (clean[cursor] === '\n') line++;
@@ -54,7 +61,7 @@
         if (token) arg = { value: token[0], end: i + token[0].length };
       }
       if (arg) commands.lastIndex = Math.max(commands.lastIndex, arg.end);
-      if (name === 'documentclass' && arg?.value) document = true;
+      if (name === 'documentclass' && arg?.value) document = hasClass = true;
       if (name === 'graphicspath') {
         if (arg?.value) {
           for (const item of arg.value.matchAll(/\{([^{}]*)\}/g)) {
@@ -70,7 +77,7 @@
         refs.push({ command: name, target: value.trim().replace(/^"([^"]+)"$/, '$1').slice(0, 1024), line });
       }
     }
-    return { document, refs, paths, truncated };
+    return { document, hasClass, hasBody, titles, refs, paths, truncated };
   }
 
   function join(directory, relative) {
