@@ -70,3 +70,13 @@ operator credential recovery and offline recovery procedures remain open.
 No password authentication, MFA, OIDC, session expiry, TLS or deployment yet.
 
 The onboarding regression also exercises rotation and revocation through the operator UI. The service rechecks ordinary proposal contributor authority at acceptance, and invalidated delegated tasks cannot be revived by re-adding a removed member. Old backups are rejected by the local restore API when identity or membership differs; this is not a complete disaster-recovery solution.
+
+## Manuscript compatibility gate automation
+
+The twenty-paper diagnostic is now a separate sharded CI workflow with staged
+results and an aggregate 18/20 gate. An original-source build, static inventory,
+or untouched export alone is insufficient. Count a pass only after a supported
+visual edit, outside-span byte checks, source-mode re-import check, isolated
+edited PDF build and visible marker. Source acquisition and template/toolchain
+failures remain visible rather than being excluded from the denominator.
+Until a complete report reaches the gate, broad LaTeX compatibility is unverified.

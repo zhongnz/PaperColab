@@ -48,3 +48,39 @@ python3 scripts/check_build.py --root main.tex --pdf corpus/local/baseline.pdf c
 ~~~
 
 Use the actual root from the report for the build. Record the source revision, ZIP SHA-256, compiler image digest, engine, root, required packages and output PDF. Mark a failed source build separately from an editor regression. Keep manuscript bytes and binaries in the local corpus unless redistribution has been cleared. For the editor trial, compare each original quarantined span byte for byte with its re-export, including comments, spacing and line endings. A static check or a successful original-source build cannot count as an editor round-trip.
+
+## Automated twenty-paper release benchmark
+
+The separate Manuscript compatibility benchmark workflow runs all twenty pinned
+sources in four five-paper shards (at most two concurrent). The first uses the
+existing pinned emcee checkout; the remaining sources are downloaded as exact
+arXiv versions and repackaged without changing file bytes. Downloads have a
+bounded size and approved HTTPS host/version; source bytes, logs and PDFs are
+not uploaded as artifacts. JSON reports contain hashes, root candidates, source
+versions, compiler image identity, coverage, and stage outcomes. Multiple root
+candidates are reported unresolved unless a reviewed explicit root override is
+provided. No attempt is made to repair a paper or guess its compiler; default
+pdfLaTeX, optional manifest engine. A pass requires a successful original build,
+byte preservation outside a single supported edit, re-import and source-mode
+edit validation, a successful edited PDF build, and the marker in extracted PDF
+text. A reachable included TeX file may be edited when the root lacks a supported
+paragraph. Missing downloads, baseline failures, unsupported roots, missing
+editable paragraphs and edited-build failures all remain separate statuses.
+The aggregate job fails below 18/20, and rejects missing or duplicate results.
+This is a diagnostic release gate, not a claim that the corpus currently passes.
+TeX execution remains in the existing isolated Docker verifier. The actual
+image ID and repository digests are recorded, and the tag is checked for changes
+at the end of each successful trial; no image pulls occur during verification.
+
+Local example (Docker, Node, Python and pdftotext required; pre-pull the TeX image):
+
+~~~sh
+python -m corpus.benchmark --shard 0 --work corpus/local/benchmark --report corpus/local/report-0.json --emcee corpus/local/emcee
+# Repeat for shards 1–3 with new directories or the unused shard folders.
+python -m corpus.summarize --require-gate corpus/local/report-*.json
+~~~
+
+Only the reports are retained in CI. Review source-specific licensing before
+redistributing any manuscript or compiled PDF. This benchmark exercises the
+shared browser parser/export model, not twenty real browser sessions or hosted
+collaboration tests. The existing browser tests separately exercise real UI.
