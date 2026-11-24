@@ -137,5 +137,7 @@ class Preview:
                         "root":root,"engine":engine,"source_sha256":source_hash}
         except ServiceError as error:
             return error.status,{"error":str(error)}
+        except Exception:
+            return 500,{"error":"The local compilation request failed. Contact the operator."}
         finally:
             if acquired:self.slot.release()

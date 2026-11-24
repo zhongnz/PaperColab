@@ -115,6 +115,9 @@ def make_handler(api):
             if self.path.split("?")[0].endswith("/presence") and length > 4096:
                 self._send(413, {"error": "Presence message too large."})
                 return
+            if self.path.split("?")[0].endswith("/compile-preview") and length > 4096:
+                self._send(413, {"error": "Preview request exceeds 4 KiB."})
+                return
             if length > 64 * 1024 * 1024:
                 self._send(413, {"error": "The upload exceeds 64 MiB."})
                 return

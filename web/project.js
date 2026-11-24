@@ -286,6 +286,7 @@
     $('create-agent-task').disabled=value||!$('delegate-cell').options.length||!$('delegate-assistant').options.length;
     $('refresh-agent-tasks').disabled=value;
     $('workflow-panel').inert=value;
+    for(const control of $('workflow-list').querySelectorAll('button,textarea'))control.disabled=value;
     $('experiment-panel').inert=value;
     $('durable-drafts').disabled=value||dirty;
     $('local-recovery').inert=value;
@@ -476,7 +477,7 @@
         }
         const endpoint='/api/projects/'+detail.id+'/workflows/'+w.id+'/steps/'+step.id;
         if(role()==='lead'&&['ready','retry'].includes(step.status)){
-          const launch=document.createElement('button');launch.type='button';launch.textContent='Launch step';
+          const launch=document.createElement('button');launch.type='button';launch.textContent='Launch step';launch.disabled=busy;
           launch.onclick=()=>act(async()=>{
             const result=await api('POST',endpoint+'/launch');
             await openProject(detail.id);
@@ -490,10 +491,10 @@
         if(canDecide()&&step.status==='evaluation'){
           const label=document.createElement('label'), assessment=document.createElement('textarea');
           label.textContent='Evaluate against acceptance criteria';
-          assessment.rows=3;assessment.maxLength=4000;assessment.setAttribute('aria-label','Assessment for '+step.title);
+          assessment.rows=3;assessment.maxLength=4000;assessment.disabled=busy;assessment.setAttribute('aria-label','Assessment for '+step.title);
           label.append(assessment);row.append(label);
           for(const [outcome,name] of [['pass','Pass evaluation'],['revise','Request another attempt']]){
-            const button=document.createElement('button');button.type='button';button.textContent=name;
+            const button=document.createElement('button');button.type='button';button.textContent=name;button.disabled=busy;
             button.onclick=()=>act(async()=>{
               await api('POST',endpoint+'/evaluate',{attempt_id:step.attempts.at(-1).id,outcome,assessment:assessment.value});
               await openProject(detail.id);say('Workflow evaluation recorded.');
