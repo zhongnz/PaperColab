@@ -26,9 +26,13 @@ def run(browser, url, service):
         page.locator("#actor").select_option(actor)
         expect(page.locator("#who")).to_contain_text("Ada" if page==a else "Bao")
         page.get_by_role("button",name=title,exact=True).click()
-        project=page.locator("#project-title").get_attribute("data-id")
         page.get_by_role("checkbox",name="Experimental live collaboration").check()
         expect(page.locator("#live-status")).to_contain_text("connected")
+        current_project=page.locator("#project-title").get_attribute("data-id")
+        assert current_project, "Connected stream must have a project identity"
+        if project is not None:
+            assert project==current_project
+        project=current_project
         page.locator('#blocks button[data-kind="paragraph"]').first.click()
     expect(a.locator("#presence-list")).to_contain_text("Bao")
     expect(b.locator("#presence-list")).to_contain_text("Ada")
