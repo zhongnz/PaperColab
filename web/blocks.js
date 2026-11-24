@@ -88,7 +88,9 @@
     if(typeof original!=='string')return empty();
     const {text}=coordinates(original);
     const unsafe=/\\(?:if[A-Za-z]*|else|fi|catcode|csname|expandafter|scantokens|obeylines|obeyspaces|ExplSyntaxOn)\b/;
-    if(unsafe.test(text))return empty();
+    // Most manuscripts do not have a literal preamble input at all.
+    // Avoid extra PEG work on every hosted file request in that case.
+    if(!/\\input\b/.test(text)||unsafe.test(text))return empty();
     let ast;
     try{ast=PaperColabLatex.LatexPegParser.parse(text);}catch{return empty();}
     const docs=ast.content.filter(n=>n.type==='environment'&&n.env==='document');

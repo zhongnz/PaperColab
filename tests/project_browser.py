@@ -21,6 +21,13 @@ from server.__main__ import make_handler
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         service = Service(Path(tmp) / "paper.sqlite", demo=True)
+        # A real imported project, independent of the demo manuscript.
+        ada=service.actor_by_token("demo-ada")
+        macro_project=service.create_project(ada,"Cross-file macro fixture")["id"]
+        service.import_files(ada,macro_project,[
+            ("main.tex",b"\\documentclass{article}\n\\input{macros}\n\\begin{document}\n\\input{results}\n\\end{document}"),
+            ("macros.tex",b"\\newcommand{\\modelname}{Model A}\n"),
+            ("results.tex",b"We use \\modelname{} in this research.")])
         server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(Api(service)))
         Thread(target=server.serve_forever, daemon=True).start()
         port = server.server_address[1]
@@ -28,10 +35,42 @@ def main():
             browser = pw.chromium.launch(executable_path=which("google-chrome") or which("chromium"))
             for width in (1440, 390):
                 exercise(browser, port, width)
+            exercise_macro_project(browser,port)
             browser.close()
         server.shutdown()
         service.close()
     print("Workspace browser flow passed.")
+
+
+def exercise_macro_project(browser,port):
+    page=browser.new_page(viewport={"width":1440,"height":900})
+    errors=[]
+    page.on("pageerror",lambda error:errors.append(str(error)))
+    page.goto(f"http://127.0.0.1:{port}/")
+    page.get_by_role("button",name=re.compile("Cross-file macro fixture")).click()
+    expect(page.locator("#file")).to_be_enabled()
+    page.locator("#file").select_option("results.tex")
+    outline=page.locator('#blocks button[data-kind="paragraph"]')
+    expect(outline).to_have_count(1)
+    expect(page.get_by_role("textbox",name="Visual block text")).to_be_visible()
+    key=outline.get_attribute("data-stable-id")
+    prose=page.get_by_role("textbox",name="Visual block text")
+    prose.click()
+    prose.press("Control+Home")
+    page.keyboard.insert_text("Validated: ")
+    page.locator("#save-direct").click()
+    expect(page.locator("#status")).to_contain_text("Cell saved")
+    expect(page.locator(f'#blocks button[data-stable-id="{key}"]')).to_be_visible()
+    expect(prose).to_contain_text("Validated:")
+    document=page.locator('#hosted-views [data-view="document"]')
+    document.click()
+    expect(document).to_have_attribute("aria-pressed","true")
+    cell=page.locator(f'#hosted-cells [data-stable-id="{key}"]')
+    expect(cell).to_be_visible()
+    expect(cell).to_contain_text("Validated:")
+    expect(cell).to_contain_text("modelname")
+    assert not errors,errors
+    page.close()
 
 
 def exercise(browser, port, width):

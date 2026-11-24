@@ -661,6 +661,29 @@ class ProductTests(unittest.TestCase):
         with self.assertRaises(ServiceError):
             s.move_block(a["bao"],p,key,0)
         self.assertEqual(s.upgrade_catalogue(a["ada"],p,leaf)["status"],"unchanged")
+        # Simulate a pre-context catalogue with the same raw source range.
+        s.assign_owner(a["ada"],p,key,a["bao"]["id"])
+        anchor=s.create_anchor(a["iris"],p,key)
+        s.db.execute("UPDATE blocks SET kind='raw',rich=0,fallback='paragraph',commands=? WHERE stable_id=?",
+                     (json.dumps(["modelname"]),key))
+        s.db.commit()
+        preview=s.upgrade_catalogue(a["ada"],p,leaf)
+        self.assertEqual(preview["status"],"ready")
+        self.assertEqual([c["stableId"] for c in preview["changes"]],[key])
+        s.upgrade_catalogue(a["ada"],p,leaf,preview["fingerprint"])
+        migrated=s.file_text(a["bao"],p,leaf)["blocks"][0]
+        self.assertTrue(migrated["rich"])
+        self.assertEqual(migrated["stableId"],key)
+        self.assertEqual(migrated["owner_id"],a["bao"]["id"])
+        self.assertEqual(next(x for x in s.project(a["ada"],p)["anchors"] if x["id"]==anchor["id"])["status"],"exact")
+        # An inline-math token might contain syntax outside the macro
+        # resolver. The context guard must reject a candidate introducing
+        # a competing definition before updating any source or identity.
+        before=s.file_text(a["bao"],p,leaf)
+        with self.assertRaises(ServiceError):
+            s.direct_edit(a["bao"],p,key,migrated["version"],before["text"],
+                          before["text"]+" $\\def\\modelname{Other}x$","source")
+        self.assertEqual(s.file_text(a["bao"],p,leaf),before)
 
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
