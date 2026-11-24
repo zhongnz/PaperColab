@@ -1,7 +1,7 @@
 # Experimental Yjs checkpoint transport
 
 Status: opt-in loopback prototype; Yjs selected for this experiment only. The
-existing hosted editor does not use this endpoint. Run:
+hosted editor uses its original save path by default, with an optional browser bridge described below. To test the API alone, run:
 
 ```sh
 npm install --prefix experiments/crdt --ignore-scripts --no-audit --no-fund
@@ -28,7 +28,7 @@ defence-in-depth checks, not a security sandbox or comprehensive audit. Only
 supported rich prose and headings are exposed. Snapshots contain history
 metadata; never expose them to an unauthorised reader. Node process isolation
 is not OS-level isolation, and the global service lock can be blocked by a
-slow worker. No public deployment, WebSocket fanout, client integration,
+slow worker. No public deployment, WebSocket fanout, live keystroke sync,
 awareness, durable local drafts, rate limiting or automatic same-cell merge.
 Transitive dependency lock remains open. Current experimental policy treats
 all binary edits as source edits, so it does not trust claimed visual intent.
