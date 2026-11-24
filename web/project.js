@@ -233,6 +233,9 @@
     $('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=value||Boolean(recovery);
     for(const button of $('hosted-views').querySelectorAll('[data-view]'))button.disabled=value;
     $('file').disabled=value;
+    $('actor').disabled=$('use-token').disabled=value;
+    $('create-agent-task').disabled=value||!$('delegate-cell').options.length||!$('delegate-assistant').options.length;
+    $('refresh-agent-tasks').disabled=value;
     $('durable-drafts').disabled=value||dirty;
     $('local-recovery').inert=value;
     updateTransportControl();

@@ -34,8 +34,8 @@ No automatic LLM invocation, no external network call, no arbitrary command
 execution, no cross-cell or structural proposal, no full-project discovery,
 no automatic evidence link creation. Rationale and evidence selections are
 assistant assertions, not independently verified facts. Context is untrusted
-data; prompt injection remains a model-side risk. No model provider or
-standard MCP transport is integrated. The existing ordinary assistant member
+data; prompt injection remains a model-side risk. The optional model adapters and standard local MCP bridge are described in
+[agent integrations](agent-integrations.md). They are separate from the service. The existing ordinary assistant member
 tokens still have their older broader project permissions; **do not give those
 tokens to a scoped task client**. Production authentication, secure remote
 transport, rate limits, secret management and a full authority audit remain

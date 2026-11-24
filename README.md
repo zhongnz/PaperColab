@@ -123,3 +123,5 @@ UI. Structural changes do not alter existing release snapshots.
 ### AI task delegation
 
 The hosted workspace now has a lead-only delegation form and a restricted, expiring, single-cell proposal API. See [agent delegation](docs/agent-delegation.md) for the authority boundary, pinned research context, review contract and limitations. No model is invoked automatically.
+
+Optional model adapters and a standard local MCP stdio bridge are documented in [agent integrations](docs/agent-integrations.md). Draft generation and proposal submission are separate actions; remote context disclosure requires explicit opt-in.

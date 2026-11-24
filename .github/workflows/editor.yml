@@ -36,3 +36,9 @@ jobs:
         run: python experiments/crdt/live_test.py
       - name: Exercise durable local draft recovery
         run: python experiments/crdt/draft_test.py
+      - name: Install optional official MCP SDK
+        run: python -m pip install -r agents/requirements-mcp.txt
+      - name: Exercise provider-independent task clients and MCP stdio
+        run: |
+          python -m unittest discover -s tests -p test_agents.py
+          python -m agents.mcp_test
