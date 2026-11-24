@@ -72,6 +72,19 @@ def exercise(browser, port, width):
         import base64
         with zipfile.ZipFile(io.BytesIO(base64.b64decode(encoded))) as archive:
             assert "Checked " in archive.read("estuary/sections/methods.tex").decode()
+        page.locator("#actor").select_option("demo-bao")
+        expect(page.locator("#who")).to_contain_text("Bao")
+        second = browser.new_page()
+        second.goto(f"http://127.0.0.1:{port}/")
+        second.get_by_role("button", name=re.compile("Estuary field notes")).click()
+        second.get_by_role("button", name=re.compile("two readings")).click()
+        expect(second.get_by_role("textbox", name="Visual block text")).to_contain_text("Checked")
+        prose.click()
+        prose.press("Control+Home")
+        page.keyboard.insert_text("Direct ")
+        page.get_by_role("button", name="Save cell directly").click()
+        expect(second.get_by_role("textbox", name="Visual block text")).to_contain_text("Direct", timeout=12000)
+        second.close()
     page.close()
     assert not errors, errors
 

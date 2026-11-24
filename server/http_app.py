@@ -52,6 +52,10 @@ class Api:
             return self.service.import_example(actor, bits[2])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "import" and method == "POST":
             return self.service.import_zip(actor, bits[2], body)
+        if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "revision" and method == "GET":
+            return self.service.manuscript_revision(actor, bits[2])
+        if len(bits) == 6 and bits[:2] == ["api", "projects"] and bits[3] == "blocks" and bits[5] == "edit" and method == "POST":
+            return self.service.direct_edit(actor, bits[2], bits[4], data.get("version"), data.get("before"), data.get("after"), data.get("mode"))
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "file" and method == "GET":
             return self.service.file_text(actor, bits[2], query["path"])
         if len(bits) == 4 and bits[:2] == ["api", "projects"] and bits[3] == "export" and method == "GET":

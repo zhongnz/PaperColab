@@ -17,6 +17,37 @@ function run(body) {
     return I.catalogue(file, body.previous || [], body.prefer || null);
   }
   if (body.op === 'apply') return I.applyEdit(body.text, body.previous, body.stableId, body.after, body.root);
+  if (body.op === 'direct') {
+    const B=PaperColabBlocks, file=parse(body.text,body.root);
+    const old=body.previous.find(b=>b.stableId===body.stableId);
+    const block=file.blocks.find(b=>b.from===old?.from && b.to===old?.to && B.current(file,b)===old.quote);
+    if (!block || typeof body.after!=='string' || body.after===old.quote)
+      return {ok:false,error:'No valid changed cell.'};
+    try {
+      let next;
+      if (block.rich) {
+        B.editSource(file,block,body.after);
+        if (body.mode==='visual' && JSON.stringify(B.tokens(block.rich))!==JSON.stringify(B.tokens(B.rich(file,block))))
+          throw new Error('Visual edits cannot change protected citation or math tokens.');
+        next=B.exportText(file);
+      } else {
+        next=B.exportText(B.structural(file,block.id,'scientific-source',{source:body.after,root:body.root}).file);
+      }
+      const parsed=parse(next,body.root), delta=body.after.length-old.quote.length;
+      if(parsed.blocks.length!==body.previous.length) throw new Error('Edit changes cell boundaries.');
+      const blocks=parsed.blocks.map((cell,i)=>{
+        const prior=body.previous[i], target=prior.stableId===old.stableId;
+        const shift=prior.from>=old.to?delta:0;
+        if(cell.kind!==prior.kind || cell.from!==prior.from+shift ||
+           cell.to!==prior.to+shift+(target?delta:0) ||
+           B.current(parsed,cell)!==(target?body.after:prior.quote))
+          throw new Error('Edit changes an unrelated source range.');
+        return {...prior,from:cell.from,to:cell.to,quote:B.current(parsed,cell),label:cell.label||'',rich:Boolean(cell.rich),
+          fallback:cell.fallback||'',commands:cell.commands||[]};
+      });
+      return {ok:true,text:next,blocks};
+    } catch(error) {return {ok:false,error:error.message};}
+  }
   if (body.op === 'move') return I.moveBlock(body.text, body.previous, body.stableId, body.toOffset, body.root);
   if (body.op === 'resolve') return I.resolveAnchor(body.blocks, body.anchor);
   throw new Error('Unknown block operation.');

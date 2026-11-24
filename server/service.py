@@ -110,6 +110,9 @@ class Service:
         CREATE TABLE IF NOT EXISTS policy (
           id INTEGER PRIMARY KEY CHECK (id = 1), allow_ai INTEGER NOT NULL, retention_days INTEGER NOT NULL);
         """)
+        if "version" not in {row["name"] for row in self._rows("PRAGMA table_info(blocks)")}:
+            self.db.execute("ALTER TABLE blocks ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+            self.db.commit()
         if not self._rows("SELECT id FROM policy"):
             self.db.execute("INSERT INTO policy (id, allow_ai, retention_days) VALUES (1, 1, 0)")
             self.db.commit()
@@ -183,13 +186,14 @@ class Service:
         if not membership:
             raise ServiceError(403, "You are not a member of this project.")
         role = membership["role"]
-        if actor["kind"] == "assistant" and action in {"decide", "release", "members", "own", "dismiss"}:
+        if actor["kind"] == "assistant" and action in {"decide", "release", "members", "own", "dismiss", "direct"}:
             raise ServiceError(403, "An assistant cannot decide, release, or change authority.")
         if action == "propose" and actor["kind"] == "assistant" and not self.policy()["allow_ai"]:
             raise ServiceError(403, "AI proposals are turned off for this workspace.")
         allowed = {
             "read": {"reader", "reviewer", "author", "lead"},
             "propose": {"author", "lead"},
+            "direct": {"author", "lead"},
             "comment": {"reviewer", "author", "lead"},
             "decide": {"reviewer", "lead"},
             "release": {"lead"},
@@ -378,13 +382,18 @@ class Service:
         return json.loads(proc.stdout)
 
     def _replace_blocks(self, project_id, path, blocks):
+        prior = {row["stable_id"]: row for row in self._rows(
+            "SELECT * FROM blocks WHERE project_id = ? AND path = ?", (project_id, path))}
         self.db.execute("DELETE FROM blocks WHERE project_id = ? AND path = ?", (project_id, path))
         for block in blocks:
-            self.db.execute("""INSERT INTO blocks (project_id, stable_id, path, kind, start, end, quote, label, rich, fallback, commands, owner_id)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+            old = prior.get(block["stableId"])
+            version = 1 if old is None else old["version"] + int(
+                old["quote"] != block["quote"] or old["kind"] != block["kind"])
+            self.db.execute("""INSERT INTO blocks (project_id, stable_id, path, kind, start, end, quote, label, rich, fallback, commands, owner_id, version)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (project_id, block["stableId"], path, block["kind"], block["from"], block["to"], block["quote"],
                              block.get("label") or "", int(block.get("rich") or 0), block.get("fallback") or "",
-                             json.dumps(block.get("commands") or [])))
+                             json.dumps(block.get("commands") or []), old["owner_id"] if old else None, version))
 
     def _blocks(self, project_id, path=None):
         sql = "SELECT * FROM blocks WHERE project_id = ?"
@@ -397,7 +406,7 @@ class Service:
         for row in self._rows(sql, args):
             result.append({"stableId": row["stable_id"], "path": row["path"], "kind": row["kind"], "from": row["start"],
                            "to": row["end"], "quote": row["quote"], "label": row["label"], "rich": bool(row["rich"]),
-                           "fallback": row["fallback"], "commands": json.loads(row["commands"]), "owner_id": row["owner_id"]})
+                           "fallback": row["fallback"], "commands": json.loads(row["commands"]), "owner_id": row["owner_id"], "version": row["version"]})
         return result
 
     def _block_row(self, project_id, stable_id):
@@ -415,6 +424,46 @@ class Service:
         self._audit(actor["id"], "owner", project_id, {"block": stable_id, "owner": owner_id})
         self.db.commit()
         return {"stableId": stable_id, "owner_id": owner_id}
+
+    def manuscript_revision(self, actor, project_id):
+        self.require(actor, project_id, "read")
+        row = self.db.execute("SELECT revision FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not row:
+            raise ServiceError(404, "Unknown project.")
+        return {"revision": row["revision"]}
+
+    def direct_edit(self, actor, project_id, stable_id, version, before, after, mode):
+        """Human-only optimistic cell mutation; unrelated cells may advance independently."""
+        self.require(actor, project_id, "direct")
+        if mode not in {"visual", "source"} or type(version) is not int or version < 1 or not isinstance(before, str) or not isinstance(after, str):
+            raise ServiceError(400, "Provide a cell version, before and after text, and editing mode.")
+        if len(after.encode("utf-8")) > 512 * 1024:
+            raise ServiceError(400, "Cell exceeds the editing limit.")
+        block = self._block_row(project_id, stable_id)
+        if version != block["version"] or before != block["quote"]:
+            raise ServiceError(409, "This cell changed remotely. Your draft has not been saved.")
+        if not block["rich"] and mode == "visual":
+            raise ServiceError(400, "Use source mode for supported scientific cells.")
+        file_row = self.db.execute("SELECT current, is_root FROM files WHERE project_id = ? AND path = ?",
+                                   (project_id, block["path"])).fetchone()
+        previous = self._blocks(project_id, block["path"])
+        result = self._node({"op": "direct", "text": file_row["current"], "previous": previous,
+                             "stableId": stable_id, "after": after, "mode": mode, "root": bool(file_row["is_root"])})
+        if not result.get("ok"):
+            raise ServiceError(409, result.get("error") or "This edit changes an unsupported boundary.")
+        with self.db:
+            self.db.execute("UPDATE files SET current = ?, dirty = 1 WHERE project_id = ? AND path = ?",
+                            (result["text"], project_id, block["path"]))
+            self._replace_blocks(project_id, block["path"], result["blocks"])
+            revision = self._touch(project_id)
+            self.db.execute("""UPDATE suggestions SET status = 'stale', result = 'stale'
+                               WHERE project_id = ? AND block_id = ? AND status = 'pending'""",
+                            (project_id, stable_id))
+            self._audit(actor["id"], "direct-edit", project_id,
+                        {"block": stable_id, "revision": revision, "mode": mode,
+                         "before": before, "after": after, "base_version": version})
+        return {"revision": revision, "block": next(b for b in self._blocks(project_id, block["path"])
+                                                   if b["stableId"] == stable_id)}
 
     def propose(self, actor, project_id, block_id, base_revision, before, after, mode, evidence_ids=None):
         self.require(actor, project_id, "propose")

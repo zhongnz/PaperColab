@@ -178,6 +178,34 @@ class ProductTests(unittest.TestCase):
         self.assertIn(old["id"], purged["removed"])
         self.assertEqual(self.service.project(self.actors["ada"], self.project)["title"], "Estuary field notes")
 
+    def test_direct_cell_edits_version_conflicts_owner_and_reconnect(self):
+        s, p, a = self.service, self.project, self.actors
+        block = paragraph(s, a["bao"], p)
+        heading = next(b for b in s.project(a["ada"], p)["blocks"] if b["kind"] == "heading")
+        s.assign_owner(a["ada"], p, block["stableId"], a["bao"]["id"])
+        changed = block["quote"].replace("two readings", "four readings")
+        result = s.direct_edit(a["bao"], p, block["stableId"], block["version"], block["quote"], changed, "visual")
+        self.assertEqual(result["block"]["version"], block["version"] + 1)
+        self.assertEqual(result["block"]["owner_id"], a["bao"]["id"])
+        for who in ("bao", "quill", "iris"):
+            with self.assertRaises(ServiceError) as caught:
+                s.direct_edit(a[who], p, block["stableId"], block["version"], block["quote"], changed, "source")
+            self.assertEqual(caught.exception.status, 409 if who == "bao" else 403)
+        s.direct_edit(a["ada"], p, heading["stableId"], heading["version"], heading["quote"],
+                      heading["quote"].replace("Sampling method", "New method"), "source")
+        newer = result["block"]
+        s.direct_edit(a["bao"], p, newer["stableId"], newer["version"], newer["quote"], block["quote"], "source")
+        with self.assertRaises(ServiceError) as caught:
+            s.direct_edit(a["bao"], p, block["stableId"], block["version"], block["quote"], changed, "source")
+        self.assertEqual(caught.exception.status, 409)
+        path = s.path
+        s.close()
+        self.service = Service(path)
+        now = paragraph(self.service, a["bao"], p)
+        self.assertEqual(now["stableId"], block["stableId"])
+        self.assertEqual(now["version"], block["version"] + 2)
+        self.assertEqual(now["owner_id"], a["bao"]["id"])
+
     def test_http_uses_the_same_rules(self):
         api = Api(self.service)
         status, me = api.handle("GET", "/api/me", {"authorization": "Bearer demo-bao"}, b"")

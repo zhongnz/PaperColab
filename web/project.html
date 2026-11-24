@@ -68,6 +68,13 @@
           </div>
           <div>
             <p id="block-label" class="muted"></p>
+            <p id="sync-state" role="status" class="muted"></p>
+            <div class="project-tools">
+              <button type="button" class="primary" id="save-direct" hidden>Save cell directly</button>
+              <button type="button" class="secondary" id="discard-local" disabled>Discard local draft</button>
+              <button type="button" class="secondary" id="refresh-manuscript">Refresh manuscript</button>
+            </div>
+            <p class="muted">Human authors may save directly or submit a proposal. AI edits still require review. Remote edits refresh idle views; local drafts are never automatically merged.</p>
             <div id="visual-host" class="surface"></div>
             <div id="source-host" class="surface" style="margin-top:10px"></div>
             <div class="project-tools">
