@@ -8,8 +8,10 @@ WEB = ROOT / "web"
 
 
 class Api:
-    def __init__(self, service):
+    def __init__(self, service, preview=False):
         self.service = service
+        from server.preview import Preview
+        self.preview=Preview(service,preview)
         from server.live import Live
         self.live = Live(service)
 
@@ -74,7 +76,7 @@ class Api:
         if bits[:2] == ["api", "me"] and method == "GET":
             return {"id": actor["id"], "name": actor["name"], "kind": actor["kind"], "workspace_role": actor["workspace_role"],
                     "experimental_crdt": self.service.crdt and (ROOT / "experiments/crdt/browser.bundle.js").is_file(),
-                    "experimental_live": self.service.crdt}
+                    "experimental_live": self.service.crdt, "local_pdf_preview": self.preview.enabled}
         if bits[:2] == ["api", "projects"] and len(bits) == 2 and method == "GET":
             return self.service.projects(actor)
         if bits[:2] == ["api", "projects"] and len(bits) == 2 and method == "POST":

@@ -243,3 +243,8 @@ button:disabled{cursor:default;opacity:.46}
 .workspace-app button:focus-visible,.workspace-app a:focus-visible,.workspace-app input:focus-visible,.workspace-app select:focus-visible,.workspace-app textarea:focus-visible{outline:2px solid #23665a;outline-offset:2px}
 @media(max-width:1000px){.workspace-app #manuscript-panel .split{grid-template-columns:1fr}.workspace-app #blocks{max-height:230px;overflow:auto}}
 @media(max-width:760px){.workspace-layout{grid-template-columns:1fr}.workspace-app main,.workspace-app footer,.workspace-app .mast-inner{width:calc(100% - 24px)}.workspace-app .panel{padding:12px}.workspace-app .mast-inner{gap:9px}.workspace-app .brand{font-size:18px}.workspace-app .account-bar{padding:8px}.workspace-nav button{padding:8px;font-size:.83rem}}
+
+#pdf-preview{border:1px solid var(--line);border-radius:8px;padding:12px;margin:12px 0}
+#preview-pages{display:flex;gap:12px;overflow-x:auto;align-items:flex-start}
+#preview-pages img{width:min(100%,480px);height:auto;flex-shrink:0;border:1px solid var(--line);background:white}
+#preview-diagnostic{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem}

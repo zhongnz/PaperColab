@@ -120,8 +120,15 @@ def make_handler(api):
                 return
             body = self.rfile.read(length) if length else b""
             headers = {key.lower(): value for key, value in self.headers.items()}
-            with api.service.lock:
-                status, payload = api.handle(self.command, self.path, headers, body)
+            bits=[p for p in urlsplit(self.path).path.split("/") if p]
+            if self.command=="POST" and len(bits)==4 and bits[:2]==["api","projects"] and bits[3]=="compile-preview":
+                if length>4096:
+                    self._send(413,{"error":"Preview request exceeds 4 KiB."})
+                    return
+                status,payload=api.preview.handle(bits[2],headers,body)
+            else:
+                with api.service.lock:
+                    status, payload = api.handle(self.command, self.path, headers, body)
             if isinstance(payload, dict) and "file" in payload and status == 200:
                 data = Path(payload["file"]).read_bytes()
                 self.send_response(200)
@@ -171,7 +178,7 @@ def main():
         print("Operator token:", token)
     if demo:
         print("Demo tokens: demo-ada (lead), demo-bao (author), demo-iris (reviewer), demo-quill (assistant)")
-    server = ThreadingHTTPServer((host, port), make_handler(Api(service)))
+    server = ThreadingHTTPServer((host, port), make_handler(Api(service,preview=os.environ.get("PAPERCOLAB_LOCAL_PDF_PREVIEW")=="1")))
     print(f"PaperColab workspace at http://{host}:{port}/")
     server.serve_forever()
 

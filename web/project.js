@@ -5,6 +5,25 @@
   const demo = [['Ada', 'demo-ada'], ['Bao', 'demo-bao'], ['Iris', 'demo-iris'], ['Quill', 'demo-quill']];
   let token = sessionStorage.getItem('papercolab-token') || '';
   let workspaceView='manuscript';
+  let previewGeneration=0,previewPending=false,previewResult=null,previewUrls=[];
+  function clearPreview(){
+    previewGeneration++;previewPending=false;previewResult=null;
+    for(const url of previewUrls)URL.revokeObjectURL(url);
+    previewUrls=[];$('preview-pages').replaceChildren();
+    $('preview-status').textContent='';$('preview-diagnostic').textContent='';$('preview-diagnostic').hidden=true;
+    $('download-preview').hidden=true;updatePreviewControls();
+  }
+  function updatePreviewControls(){
+    $('compile-preview').disabled=previewPending||busy||dirty||Boolean(recovery)||!$('preview-root').options.length;
+    $('preview-root').disabled=previewPending;$('preview-engine').disabled=previewPending;
+    $('clear-preview').disabled=!previewResult&&!previewPending&&!$('preview-status').textContent;
+    if(previewResult){
+      const stale=previewResult.revision!==detail?.revision;
+      $('preview-status').textContent='Saved revision '+previewResult.revision+' · '+previewResult.engine+
+        (stale?' · Older than current manuscript':'')+
+        (previewResult.status==='failed'?' · Build failed':previewResult.pages.length?' · First '+previewResult.pages.length+' page(s)':' · Raster preview unavailable; PDF download available');
+    }
+  }
   function setWorkspaceView(view){
     workspaceView=view;
     $('open').dataset.workspaceView=view;
@@ -265,7 +284,7 @@
     $('experiment-panel').inert=value;
     $('durable-drafts').disabled=value||dirty;
     $('local-recovery').inert=value;
-    updateTransportControl();
+    updateTransportControl();updatePreviewControls();
   }
   const normalise = value => value.replace(/\r\n?/g,'\n');
   function directAllowed() { return me?.kind === 'human' && ['author','lead'].includes(role()); }
@@ -277,7 +296,7 @@
     $('durable-drafts').disabled=busy||dirty;
     $('keep-drafts').disabled=!dirty||!$('durable-drafts').checked;
     for(const button of $('hosted-cells').querySelectorAll('[data-structure]'))button.disabled=dirty;
-    presenceChanged();
+    presenceChanged();updatePreviewControls();
   }
 
   function say(message) { $('status').textContent = message || ''; }
@@ -341,6 +360,7 @@
   async function openProject(id) {
     if(live&&live.project!==id)stopLive();
     if(detail?.id!==id){
+      clearPreview();
       setWorkspaceView('manuscript');
       $('member-id').value='';
       clearProvision();
@@ -353,6 +373,11 @@
     closeRecovery();
     const incoming = await api('GET', '/api/projects/' + id);
     detail = incoming;
+    $('pdf-preview').hidden=!(me.local_pdf_preview&&me.kind==='human');
+    const rootSelect=$('preview-root'),oldRoot=rootSelect.value;
+    rootSelect.replaceChildren(...detail.files.filter(f=>f.is_root&&/\.(tex|ltx)$/i.test(f.path)).map(f=>new Option(f.path,f.path)));
+    if([...rootSelect.options].some(o=>o.value===oldRoot))rootSelect.value=oldRoot;
+    updatePreviewControls();
     updateTransportControl();
     $('open').hidden = false;
     $('workspace-welcome').hidden=true;
@@ -1113,6 +1138,7 @@
       $('delegated-token').value='';$('delegated-credential').hidden=true;$('delegate-instructions').value='';
       for(const key of ['experiment-title','experiment-objective','experiment-image','object-body'])$(key).value='';
       for(const key of ['workflow-title','workflow-objective','workflow-step-title','workflow-instructions','workflow-criteria'])$(key).value='';
+      clearPreview();
       destroyEditors(); detail=null; selected=null; fileText='';fileMacros=new Map();
       $('crdt-enabled').checked=false;updateTransportControl();
       $('open').hidden=true;$('workspace-welcome').hidden=false;
@@ -1284,6 +1310,43 @@
     await api('POST', '/api/collections', { name: $('collection-name').value, projects: [detail.id] });
     say('Collection saved.');
   });
+  $('clear-preview').onclick=clearPreview;
+  $('preview-root').onchange=clearPreview;
+  $('preview-engine').onchange=clearPreview;
+  $('download-preview').onclick=()=>{
+    if(previewResult?.pdf_b64)download(Uint8Array.from(atob(previewResult.pdf_b64),c=>c.charCodeAt(0)),
+      'papercolab-revision-'+previewResult.revision+'.pdf','application/pdf');
+  };
+  $('compile-preview').onclick=async()=>{
+    if(previewPending||busy||dirty||recovery||!detail)return;
+    clearPreview();
+    const generation=previewGeneration,project=detail.id,credential=token;
+    previewPending=true;$('preview-status').textContent='Compiling saved revision '+detail.revision+' locally…';
+    updatePreviewControls();
+    try{
+      const result=await api('POST','/api/projects/'+project+'/compile-preview',{
+        root:$('preview-root').value,engine:$('preview-engine').value,revision:detail.revision});
+      if(generation!==previewGeneration||detail?.id!==project||token!==credential)return;
+      previewResult=result;
+      if(result.status==='failed'){
+        $('preview-diagnostic').textContent=result.diagnostic;$('preview-diagnostic').hidden=false;
+      }else{
+        $('download-preview').hidden=false;
+        for(const [i,encoded] of result.pages.entries()){
+          const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+          const url=URL.createObjectURL(new Blob([bytes],{type:'image/png'}));
+          previewUrls.push(url);
+          const image=document.createElement('img');image.src=url;image.alt='Compiled manuscript page '+(i+1);
+          $('preview-pages').append(image);
+        }
+      }
+    }catch(error){
+      if(generation===previewGeneration)$('preview-status').textContent=error.message;
+    }finally{
+      if(generation===previewGeneration){previewPending=false;updatePreviewControls();}
+    }
+  };
+  window.addEventListener('pagehide',clearPreview);
   $('export').onclick = () => act(async () => {
     const payload = await api('GET', '/api/projects/' + detail.id + '/export');
     download(Uint8Array.from(atob(payload.zip_b64), char => char.charCodeAt(0)), detail.title + '.zip', 'application/zip');

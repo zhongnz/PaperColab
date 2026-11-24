@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src blob:; base-uri 'none'; form-action 'none'">
   <title>Workspace · PaperColab</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -108,6 +108,19 @@
       </section>
       <section class="panel" data-workspace-panel="manuscript" id="manuscript-panel">
         <h2>Manuscript</h2>
+        <section id="pdf-preview" hidden>
+          <div class="project-tools">
+            <label for="preview-root">PDF root</label><select id="preview-root"></select>
+            <label for="preview-engine">Engine</label><select id="preview-engine"><option>pdflatex</option><option>xelatex</option><option>lualatex</option></select>
+            <button type="button" id="compile-preview">Compile saved revision</button>
+            <button type="button" id="clear-preview" class="secondary" disabled>Clear preview</button>
+          </div>
+          <p class="muted">Local Docker build. First three raster pages at most. Unsaved drafts are excluded; no automatic compilation.</p>
+          <p id="preview-status" role="status"></p>
+          <pre id="preview-diagnostic" hidden></pre>
+          <button type="button" id="download-preview" hidden>Download compiled PDF</button>
+          <div id="preview-pages"></div>
+        </section>
         <div class="split">
           <div>
             <label for="file">File</label>

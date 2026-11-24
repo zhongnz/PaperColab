@@ -4,6 +4,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -125,13 +126,53 @@ def build(data, root, engine, work):
     return contents
 
 
+def preview_bundle(pdf, work):
+    """Rasterise at most three pages inside the same disposable container.
+
+    Never return PDF-generated HTML or SVG. If neither renderer is
+    installed or rendering fails, retain the compiled PDF with a
+    transparent preview-unavailable result.
+    """
+    if len(pdf)>16*MIB:
+        raise ValueError("PDF exceeds the 16 MiB interactive preview limit. Use the standalone build.")
+    source=work/"preview.pdf"
+    source.write_bytes(pdf)
+    prefix=work/"page"
+    if shutil.which("pdftoppm"):
+        args=["pdftoppm","-f","1","-l","3","-scale-to","1200","-png",str(source),str(prefix)]
+    elif shutil.which("gs"):
+        args=["gs","-dSAFER","-dBATCH","-dNOPAUSE","-dFirstPage=1","-dLastPage=3",
+              "-sDEVICE=png16m","-dFIXEDMEDIA","-dPDFFitPage","-r100","-g1200x1200",
+              "-sOutputFile="+str(prefix)+"-%d.png",str(source)]
+    else:
+        args=None
+    pages=[]
+    if args:
+        try:
+            result=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL,timeout=20,check=False)
+            if result.returncode==0:
+                for path in sorted(work.glob("page-*.png"))[:3]:
+                    if not path.is_file() or path.stat().st_size>2*MIB:break
+                    data=path.read_bytes()
+                    if not data.startswith(b"\x89PNG\r\n\x1a\n"):break
+                    pages.append(data)
+        except (OSError,subprocess.TimeoutExpired):
+            pass
+    buffer=io.BytesIO()
+    with zipfile.ZipFile(buffer,"w",compression=zipfile.ZIP_STORED) as z:
+        z.writestr("document.pdf",pdf)
+        for i,data in enumerate(pages,1):z.writestr("page-"+str(i)+".png",data)
+    return buffer.getvalue()
+
+
 if __name__ == "__main__":
     if os.environ.get("PAPERCOLAB_CONTAINER") != "1" or Path.cwd() != Path("/work"):
         raise SystemExit("Start the isolated job with scripts/check_build.py.")
     try:
         with tempfile.TemporaryDirectory(dir="/work") as tmp:
             pdf = build(sys.stdin.buffer.read(64 * MIB + 1), sys.argv[1], sys.argv[2], Path(tmp))
-            sys.stdout.buffer.write(pdf)
+            sys.stdout.buffer.write(preview_bundle(pdf,Path(tmp)) if sys.argv[3:]==["preview"] else pdf)
     except (ValueError, OSError, RuntimeError, zipfile.BadZipFile) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(1)

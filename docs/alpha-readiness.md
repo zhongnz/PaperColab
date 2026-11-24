@@ -90,3 +90,27 @@ A lead-only, per-file catalogue upgrade preview/application is available in Proj
 Cross-file macro context prototype: one root, literal preamble input files containing only recognised declarations, and direct leaf sections, bounded to 128 text sources and 2 MiB of characters. The import catalogue, hosted file snapshot/edits/proposals, offline editor, and corpus use the same resolver. Visible competing definitions are excluded; ambiguous paths, multiple roots, nested/conditional includes and dynamic scope disable cross-file context. Hosted mutations compare the context before and after and refuse changes, and the offline export checks the same invariant. Legacy offset moves are disabled in projects with shared context. Existing project files use the exact-range catalogue upgrade if classification changes; unsupported boundaries remain blocked. This does not resolve arbitrary style/class/package semantics or prove TeX expansion equivalence. No general macro migration or dynamic include editing.
 
 The previous source-span/metadata upgrade baseline (0cf8a23) passed all three ordinary CI suites; its corpus result remains 8/20 and 34.6% classified paragraph coverage. The cross-file context increment adds service regressions for direct edits, proposals, exact-range upgrade of a simulated legacy catalogue, retained ownership/anchors, and refusal of a context-changing candidate. A hosted browser fixture exercises both focused and document views with an imported multi-file project. Fresh CI is required before marking the increment verified.
+
+## Local integrated PDF preview
+
+Opt in with PAPERCOLAB_LOCAL_PDF_PREVIEW=1 alongside the loopback server,
+with Docker installed and the existing TeX Live image pre-pulled. A human
+project member chooses a detected root and pdfLaTeX/XeLaTeX/LuaLaTeX,
+then explicitly compiles the saved revision. No unsaved drafts, automatic
+compilation or host TeX fallback. One build at a time per server; the
+request snapshots the ZIP under the service lock and releases it during
+compilation, then rechecks the requesting credential and membership.
+Returns the saved revision, current revision, source ZIP hash and PDF hash.
+The UI shows up to three bounded PNG pages rendered inside the disposable
+container (Poppler if available, otherwise Ghostscript) and allows full PDF
+download. Failed builds show a bounded plain-text diagnostic; missing
+raster support does not prevent PDF download. No active PDF embedding,
+no persisted preview or cross-user cache. Clear preview/sign-out/project
+switch discards the UI result; it does not cancel a running container.
+Other edits can proceed, and older previews are identified by revision.
+Existing no-network, no-shell-escape, unprivileged resource-bounded Docker
+controls remain. This is for trusted local research projects, not public
+multi-tenant execution; downloaded PDFs may contain active content.
+The interactive PDF limit is 16 MiB, raster pages 2 MiB each, at most
+1200 pixels per dimension. Real container/browser CI and permission/
+lock regression tests are added; do not claim verification before they pass.
