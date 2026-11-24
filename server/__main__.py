@@ -88,7 +88,27 @@ def make_handler(api):
             self.respond()
 
         def respond(self):
-            length = int(self.headers.get("content-length") or 0)
+            host = self.headers.get("Host", "")
+            origin = self.headers.get("Origin")
+            try:
+                authority = urlsplit("http://" + host)
+                valid_host = (authority.hostname in {"127.0.0.1", "localhost", "::1"}
+                              and not authority.username and not authority.password
+                              and not authority.path and not authority.query and not authority.fragment
+                              and (authority.port is None or 1 <= authority.port <= 65535))
+            except ValueError:
+                valid_host = False
+            if not valid_host or (origin and origin != "http://" + host):
+                self._send(403, {"error": "Only same-origin loopback requests are permitted."})
+                return
+            try:
+                length = int(self.headers.get("content-length") or 0)
+            except ValueError:
+                self._send(400, {"error": "Invalid request length."})
+                return
+            if length < 0:
+                self._send(400, {"error": "Invalid request length."})
+                return
             if self.path.split("?")[0].startswith("/api/delegated/") and length > 512 * 1024:
                 self._send(413, {"error": "Delegated request exceeds 512 KiB."})
                 return
@@ -108,6 +128,7 @@ def make_handler(api):
                 self.send_header("content-type", payload["type"])
                 self.send_header("content-length", str(len(data)))
                 self.send_header("cache-control", "no-store")
+                self.send_header("x-content-type-options", "nosniff")
                 self.end_headers()
                 self.wfile.write(data)
                 return
@@ -119,6 +140,7 @@ def make_handler(api):
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(data)))
             self.send_header("cache-control", "no-store")
+            self.send_header("x-content-type-options", "nosniff")
             self.end_headers()
             self.wfile.write(data)
 
@@ -139,6 +161,9 @@ def main():
     if crdt and host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("Experimental collaboration is loopback-only.")
     service = Service(data / "papercolab.sqlite", demo=demo, crdt=crdt)
+    if not demo and service.db.execute("SELECT 1 FROM actors WHERE token IN ('demo-ada','demo-bao','demo-iris','demo-quill')").fetchone():
+        service.close()
+        raise SystemExit("Use a new PAPERCOLAB_DATA directory for non-demo accounts; demo databases are not private workspaces.")
     if not demo and not service.db.execute("SELECT id FROM actors").fetchone():
         token = __import__("secrets").token_urlsafe(24)
         service._insert_actor("Operator", "human", token, "operator")

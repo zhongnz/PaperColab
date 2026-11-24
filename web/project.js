@@ -1109,6 +1109,10 @@
       destroyEditors(); detail=null; selected=null; fileText='';
       $('crdt-enabled').checked=false;updateTransportControl();
       $('open').hidden=true;$('workspace-welcome').hidden=false;
+      for(const id of ['project-title','readiness','members','releases','blocks','queue','agent-task-list','workflow-list','experiment-list','library','links','decisions','audit','cost-out','review-count','sync-state','block-label','delegated-task-id','file','delegate-cell','delegate-assistant','delegate-context','workflow-select','workflow-cell','workflow-assistant','workflow-context','workflow-dependencies','experiment-code','experiment-datasets','evidence'])$(id).replaceChildren();
+      delete $('project-title').dataset.id;
+      for(const id of ['comment-body','claim','decision','object-title','object-id','member-id','search','account-name'])$(id).value='';
+      $('cost-out').hidden=true;
       $('project-list').replaceChildren();$('search-results').replaceChildren();
       $('project-create-tools').hidden=$('project-search-tools').hidden=$('provision-panel').hidden=true;
       clearProvision();me=null;projects=[];
@@ -1252,7 +1256,13 @@
     $('demo-account').hidden=!health.demo;
     if(!token&&health.demo)token='demo-ada';
     $('actor').value=token;
-    if(token){await refresh();sessionStorage.setItem('papercolab-token',token);}
-    else $('who').textContent='Signed out';
+    if(token){
+      try{await refresh();sessionStorage.setItem('papercolab-token',token);}
+      catch(error){
+        token='';sessionStorage.removeItem('papercolab-token');$('actor').value='';
+        $('who').textContent='Signed out';$('project-create-tools').hidden=$('project-search-tools').hidden=$('provision-panel').hidden=true;
+        throw error;
+      }
+    }else $('who').textContent='Signed out';
   });
 })();

@@ -44,3 +44,5 @@ remain the authority. Local named accounts are not a substitute for production
 authentication. No architecture migration, new framework or new dependencies
 in this increment. Next: isolate provisioning and deployment threat model,
 expand the corpus and validate the user journey before adding new capabilities.
+
+The second consolidation increment adds a non-demo browser onboarding regression, same-origin loopback Host/Origin checks, generic unexpected API errors, rejected revoked API actors, and sign-out cleanup. These controls reduce local prototype exposure but do not establish public deployment safety. The local server refuses non-demo startup on a database containing the fixed demo credentials.

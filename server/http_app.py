@@ -46,6 +46,9 @@ class Api:
                     from server.service import ServiceError
                     raise ServiceError(401, "A delegated credential is restricted to its task.")
                 actor = self.service.actor_by_token(token)
+                if actor["revoked"]:
+                    from server.service import ServiceError
+                    raise ServiceError(403, "This actor is revoked.")
                 return 200, self.route(method, path, query, headers, body, actor)
             if method == "GET":
                 return self.static(path)
