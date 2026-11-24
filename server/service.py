@@ -314,7 +314,8 @@ class Service:
         row = self.db.execute("SELECT current, is_text FROM files WHERE project_id = ? AND path = ?", (project_id, path)).fetchone()
         if not row or not row["is_text"]:
             raise ServiceError(404, "That file is not editable text.")
-        return {"path": path, "text": row["current"]}
+        return {"path": path, "text": row["current"], "blocks": self._blocks(project_id, path),
+                "revision": self.manuscript_revision(actor, project_id)["revision"]}
 
     def import_example(self, actor, project_id):
         self.require(actor, project_id, "propose")

@@ -6,12 +6,19 @@
   let token = sessionStorage.getItem('papercolab-token') || 'demo-ada';
   let me, projects = [], detail, fileText = '', selected, visual, source, draft = null, sourceDraft = '';
   let dirty = false, busy = false, polling = false, sourceDirty = false;
+  let viewMode='focused', cellViews=new Map(), multiDrafts=new Map();
+  const B=PaperColabBlocks, E=PaperColabEditors;
+  const isMulti=()=>viewMode!=='focused';
+  function freeze(value) {
+    $('visual-host').inert=$('source-host').inert=$('hosted-cells').inert=value;
+  }
   const normalise = value => value.replace(/\r\n?/g,'\n');
   function directAllowed() { return me?.kind === 'human' && ['author','lead'].includes(role()); }
   function draftState(value) {
     dirty=value;
     $('discard-local').disabled=!value;
     $('refresh-manuscript').disabled=value;
+    $('hosted-draft-count').textContent=isMulti() ? multiDrafts.size+' unsaved cell'+(multiDrafts.size===1?'':'s') : '';
   }
 
   function say(message) { $('status').textContent = message || ''; }
@@ -43,6 +50,8 @@
 
   function destroyEditors() {
     visual?.destroy(); source?.destroy(); visual = source = null; draft = null; sourceDraft = '';
+    for(const entry of cellViews.values()) entry.destroy();
+    cellViews.clear();multiDrafts.clear();$('hosted-cells').replaceChildren();
     $('visual-host').replaceChildren(); $('source-host').replaceChildren();
     sourceDirty=false; draftState(false);
   }
@@ -177,6 +186,8 @@
   async function showFile(path) {
     const payload = await api('GET', '/api/projects/' + detail.id + '/file?path=' + encodeURIComponent(path));
     fileText = payload.text;
+    // Text and catalogue come from one server-side snapshot.
+    detail.blocks=detail.blocks.filter(b=>b.path!==path).concat(payload.blocks);
     const host = $('blocks');
     host.replaceChildren();
     const blocks = detail.blocks.filter(block => block.path === path);
@@ -184,16 +195,162 @@
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'secondary';
       button.textContent = (block.kind === 'heading' ? 'Heading' : block.rich ? 'Paragraph' : 'Preserved') + ' · ' + block.quote.replace(/\s+/g, ' ').slice(0, 80);
-      button.onclick = () => { if(!busy && (!dirty || window.confirm('Discard your local cell draft?'))) selectBlock(block); };
+      button.onclick = () => {
+        if(busy) return;
+        if(isMulti()) {selected=block;cellViews.get(block.stableId)?.element.scrollIntoView({block:'nearest'});}
+        else if(!dirty || window.confirm('Discard your local cell draft?')) selectBlock(block);
+      };
       host.append(button);
     }
     const current = blocks.find(block => block.stableId === selected?.stableId) || blocks.find(block => block.rich && block.kind === 'paragraph') || blocks[0];
-    if (current) selectBlock(current); else {selected=null;destroyEditors();}
+    if(isMulti()) {selected=current;renderMulti(blocks);}
+    else if (current) selectBlock(current); else {selected=null;destroyEditors();}
   }
+
+  function updateView() {
+    $('hosted-cells').hidden=!isMulti();
+    $('focused-cell').hidden=isMulti();
+    for(const button of $('hosted-views').querySelectorAll('[data-view]'))
+      button.setAttribute('aria-pressed',String(button.dataset.view===viewMode));
+  }
+
+  function mountHostedCell(base) {
+    const element=document.createElement('section');element.className='manuscript-cell cell-'+base.kind;
+    element.dataset.stableId=base.stableId;
+    const header=document.createElement('div');header.className='cell-header';
+    const label=document.createElement('span'), status=document.createElement('p');
+    status.className='cell-status';status.setAttribute('role','status');
+    const model=base.kind==='raw'?B.scientific(base.quote):null;
+    label.textContent=(model?.type??base.kind)+' · version '+base.version+(base.owner_id?' · owned':'');
+    header.append(label);element.append(header);
+    const content=document.createElement('div');content.className='cell-content';element.append(content);
+    const controls=document.createElement('div');controls.className='cell-operations';element.append(controls,status);
+    const allowed=['author','lead'].includes(role());
+    const editable=allowed&&(base.rich||Boolean(model&&directAllowed()));
+    let editor=null, fields=null, after=base.quote, mode='visual', valid=true;
+    const area=document.createElement('textarea');area.className='hosted-source';
+    area.setAttribute('aria-label','LaTeX cell '+base.stableId);area.value=normalise(base.quote);area.rows=4;area.hidden=true;
+    area.readOnly=!editable;area.spellcheck=false;element.append(area);
+    const make=(name,click)=>{const button=document.createElement('button');button.type='button';button.textContent=name;button.onclick=click;controls.append(button);return button;};
+    const toggle=make('LaTeX',()=>{area.hidden=!area.hidden;toggle.setAttribute('aria-expanded',String(!area.hidden));});
+    toggle.setAttribute('aria-expanded','false');
+    const save=make('Save cell',()=>act(()=>commitHostedCell(base,'direct'),true));
+    const propose=make('Propose cell',()=>act(()=>commitHostedCell(base,'proposal'),true));
+    const discard=make('Discard cell draft',()=>act(async()=>{
+      multiDrafts.delete(base.stableId);
+      if(!multiDrafts.size) {draftState(false);await openProject(detail.id);}
+      else {replaceHostedCell(base);draftState(true);}
+    },true));
+    save.hidden=!directAllowed()||!editable;propose.hidden=!allowed||!base.rich;discard.hidden=!editable;
+    function changed(value,kind,error='') {
+      after=value;mode=kind;valid=!error;
+      if(error||value!==base.quote) multiDrafts.set(base.stableId,{base,after,mode,valid});
+      else multiDrafts.delete(base.stableId);
+      const has=multiDrafts.has(base.stableId);
+      save.disabled=propose.disabled=!has||!valid;discard.disabled=!has;
+      status.textContent=error||(has?'Local draft · not saved':'');
+      element.classList.toggle('has-draft',has);
+      draftState(multiDrafts.size>0);
+    }
+    function renderContent(value) {
+      editor?.destroy();editor=null;fields=null;content.replaceChildren();
+      const parsed=B.parseFile(value), local=parsed.blocks[0];
+      if(base.rich&&local?.rich) {
+        editor=E.visual(content,B.rich(parsed,local),{
+          onChange(json){
+            try {
+              B.editVisual(parsed,local,json);
+              const next=B.current(parsed,local);
+              // If a source draft was applied locally first, retain source
+              // attribution (protected tokens may have intentionally changed).
+              area.value=normalise(next);changed(next,mode==='source'?'source':'visual');
+            } catch(error){changed(after,mode,error.message);}
+          },onState(){},onProtected(){status.textContent='Edit protected tokens in LaTeX.';}
+        });
+        editor.view.dom.setAttribute('aria-label','Visual cell '+base.stableId);
+        editor.setEditable(editable,false);
+      } else if(model&&B.scientific(value)) {
+        const spec=B.scientific(value);
+        fields=E.scientificFields(content,spec);
+        for(const input of fields.inputs) {
+          input.readOnly=!editable;
+          input.addEventListener('input',()=>{
+            try {
+              const values=fields.inputs.map((el,i)=>el.value===normalise(spec.fields[i].value)?spec.fields[i].value:
+                el.value.replace(/\n/g,spec.fields[i].value.match(/\r\n|\r|\n/)?.[0]??'\n'));
+              const next=B.scientificEdit(value,values);
+              area.value=normalise(next);changed(next,'source');
+            } catch(error){changed(after,'source',error.message);}
+          });
+        }
+      } else {
+        const pre=document.createElement('pre');pre.textContent=value;content.append(pre);
+      }
+    }
+    renderContent(base.quote);
+    const apply=make('Apply LaTeX draft',()=>{
+      const eol=base.quote.match(/\r\n|\r|\n/)?.[0]??fileText.match(/\r\n|\r|\n/)?.[0]??'\n';
+      const next=area.value.replace(/\n/g,eol);
+      try {
+        if(base.rich) {
+          const parsed=B.parseFile(base.quote);B.editSource(parsed,parsed.blocks[0],next);
+        } else if(!model||B.scientific(next)?.type!==model.type) throw new Error('Keep the same supported scientific cell type.');
+        mode='source';renderContent(next);changed(next,'source');apply.disabled=true;
+      } catch(error){changed(next,'source',error.message);}
+    });
+    apply.hidden=!editable;apply.disabled=true;
+    area.addEventListener('input',()=>{
+      editor?.setEditable(false,false);
+      if(fields) for(const input of fields.inputs) input.readOnly=true;
+      apply.disabled=false;changed(area.value,'source','Apply or discard the LaTeX draft first.');
+    });
+    save.disabled=propose.disabled=discard.disabled=true;
+    element.addEventListener('focusin',()=>{selected=base;});
+    return {element,destroy:()=>editor?.destroy()};
+  }
+  function replaceHostedCell(base) {
+    const old=cellViews.get(base.stableId), next=mountHostedCell(base);
+    old.element.replaceWith(next.element);old.destroy();cellViews.set(base.stableId,next);
+  }
+  function renderMulti(blocks) {
+    destroyEditors();updateView();
+    const host=$('hosted-cells');host.className='manuscript-surface '+viewMode;
+    $('sync-state').textContent='Revision '+detail.revision+' · '+blocks.length+' cells';
+    for(const base of blocks) {
+      const entry=mountHostedCell(base);cellViews.set(base.stableId,entry);host.append(entry.element);
+    }
+  }
+  async function commitHostedCell(base, action) {
+    const entry=multiDrafts.get(base.stableId);
+    if(!entry?.valid) return;
+    if(action==='direct'&&!directAllowed()) return;
+    let next=base;
+    if(action==='direct') {
+      const result=await api('POST','/api/projects/'+detail.id+'/blocks/'+base.stableId+'/edit',
+        {version:base.version,before:base.quote,after:entry.after,mode:entry.mode});
+      next=result.block;
+    } else {
+      const result=await api('POST','/api/projects/'+detail.id+'/suggestions',
+        {block_id:base.stableId,base_revision:detail.revision,before:base.quote,after:entry.after,mode:entry.mode});
+      if(result.status!=='pending') throw new Error('Proposal is stale; your cell draft is retained.');
+    }
+    multiDrafts.delete(base.stableId);
+    if(!multiDrafts.size) {draftState(false);await openProject(detail.id);}
+    else {
+      detail.blocks=detail.blocks.map(b=>b.stableId===next.stableId?next:b);
+      replaceHostedCell(next);draftState(true);
+    }
+    say(action==='direct'?'Cell saved; other local drafts retained.':'Cell proposal recorded; other local drafts retained.');
+  }
+  for(const button of $('hosted-views').querySelectorAll('[data-view]')) button.onclick=()=>{
+    if(busy||button.dataset.view===viewMode) return;
+    if(dirty&&!window.confirm('Discard all local cell drafts and switch view?')) return;
+    act(async()=>{viewMode=button.dataset.view;updateView();await showFile($('file').value);},true);
+  };
 
   function selectBlock(block) {
     selected = block;
-    destroyEditors();
+    destroyEditors();updateView();
     const root = Boolean(detail.files.find(file => file.path === block.path)?.is_root);
     const parsed = PaperColabBlocks.parseFile(fileText, { root });
     const local = parsed.blocks.find(item => item.from === block.from && item.to === block.to && PaperColabBlocks.current(parsed,item)===block.quote);
@@ -252,9 +409,9 @@
           // Lock editing during the refresh, after checking for any draft
           // created while the revision request was in flight.
           busy=true;
-          $('visual-host').inert=$('source-host').inert=true;
+          freeze(true);
           try {await openProject(id);}
-          finally {busy=false;$('visual-host').inert=$('source-host').inert=false;}
+          finally {busy=false;freeze(false);}
         }
       }
     } catch(error) {
@@ -290,9 +447,9 @@
     if(busy) {say('Synchronisation in progress; try again.'); return;}
     if(dirty && !allowDraft) {say('Save, propose or discard the local cell draft before this action.');return;}
     busy=true;
-    $('visual-host').inert=$('source-host').inert=true;
+    freeze(true);
     Promise.resolve().then(work).catch(fail).finally(()=>{
-      busy=false;$('visual-host').inert=$('source-host').inert=false;
+      busy=false;freeze(false);
     });
   }
 
@@ -325,7 +482,7 @@
     });
   };
   $('file').onchange = () => {
-    if(dirty && !window.confirm('Discard your local cell draft?')) {$('file').value=selected.path;return;}
+    if(busy || (dirty && !window.confirm('Discard your local cell drafts?'))) {$('file').value=selected?.path??'';return;}
     act(()=>showFile($('file').value),true);
   };
   $('save-direct').onclick=()=>act(saveDirect,true);
@@ -384,6 +541,7 @@
     $('cost-out').hidden = false;
     $('cost-out').textContent = JSON.stringify(cost, null, 2);
   });
+  updateView();
   $('allow-ai').checked = true;
   act(refresh);
 })();

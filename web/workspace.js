@@ -131,44 +131,7 @@
   };
 
   function scientificPanel(host, part, model) {
-    const panel=document.createElement('div');
-    panel.className='scientific-panel';
-    const title=document.createElement('strong');
-    title.textContent={equation:'Equation',table:'Table',figure:'Figure',list:'List'}[model.type];
-    panel.append(title);
-    const inputs=[];
-    function field(index) {
-      const data=model.fields[index], label=document.createElement('label');
-      const input=document.createElement(model.type==='equation'?'textarea':'input');
-      input.value=data.value; input.setAttribute('aria-label',data.name);
-      input.spellcheck=false;
-      if (model.type==='equation') input.rows=3;
-      label.append(input);
-      inputs[index]=input;
-      return label;
-    }
-    if (model.type==='table') {
-      const wrap=document.createElement('div'); wrap.className='scientific-table-scroll';
-      const table=document.createElement('table'), body=document.createElement('tbody');
-      for (const row of model.rows) {
-        const tr=document.createElement('tr');
-        for (const i of row) { const td=document.createElement('td'); td.append(field(i)); tr.append(td); }
-        body.append(tr);
-      }
-      table.append(body); wrap.append(table); panel.append(wrap);
-    } else {
-      for (let i=0;i<model.fields.length;i++) {
-        const row=document.createElement('div'); row.className='scientific-field';
-        const name=document.createElement('span'); name.textContent=model.fields[i].name;
-        row.append(name,field(i)); panel.append(row);
-      }
-    }
-    if (model.type==='equation') {
-      const preview=document.createElement('div'); preview.className='math-linear-preview';
-      const symbols={alpha:'α',beta:'β',gamma:'γ',delta:'δ',theta:'θ',lambda:'λ',mu:'μ',pi:'π',sigma:'σ',omega:'ω',sum:'∑',int:'∫',times:'×',cdot:'·',pm:'±',leq:'≤',geq:'≥',neq:'≠',infty:'∞'};
-      const render=()=>{preview.textContent='Linear preview: '+inputs[0].value.trim().replace(/\\([A-Za-z]+)/g,(m,k)=>symbols[k]??m);};
-      inputs[0].addEventListener('input',render); render(); panel.append(preview);
-    }
+    const {panel,inputs}=editors.scientificFields(host,model);
     if (model.type==='figure') {
       const figure=document.createElement('figure'); figure.className='local-figure';
       const caption=document.createElement('figcaption');
@@ -230,7 +193,7 @@
       } catch(error){status.textContent=error.message;}
     };
     apply.disabled=discard.disabled=true;
-    actions.append(apply,discard); panel.append(actions,status); host.append(panel);
+    actions.append(apply,discard); panel.append(actions,status);
     return panel;
   }
   function citationPicker(header, part, area, sync) {

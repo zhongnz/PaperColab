@@ -67,8 +67,16 @@
             <div id="blocks" class="stack" style="margin-top:12px"></div>
           </div>
           <div>
-            <p id="block-label" class="muted"></p>
+            <div id="hosted-views" role="group" aria-label="Manuscript view" class="project-tools">
+              <button type="button" data-view="focused" aria-pressed="true">Focused</button>
+              <button type="button" data-view="document" aria-pressed="false">Document</button>
+              <button type="button" data-view="cells" aria-pressed="false">Cells</button>
+            </div>
             <p id="sync-state" role="status" class="muted"></p>
+            <p id="hosted-draft-count" role="status" class="muted"></p>
+            <div id="hosted-cells" hidden></div>
+            <div id="focused-cell">
+            <p id="block-label" class="muted"></p>
             <div class="project-tools">
               <button type="button" class="primary" id="save-direct" hidden>Save cell directly</button>
               <button type="button" class="secondary" id="discard-local" disabled>Discard local draft</button>
@@ -83,6 +91,7 @@
               <button type="button" class="text-button" id="comment">Comment on this block</button>
             </div>
             <label>Comment <input id="comment-body" style="width:min(100%,420px)"></label>
+            </div>
           </div>
         </div>
       </section>

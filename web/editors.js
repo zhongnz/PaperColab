@@ -69,6 +69,49 @@
       finally { quiet = false; }
     } };
   }
-  globalThis.PaperColabEditors = { visual, source, undo: editor => runHistory(editor, E.undo), redo: editor => runHistory(editor, E.redo),
+  // Shared scientific field controls: host applications supply persistence and authority.
+  function scientificFields(host, model) {
+    const panel=document.createElement('div');
+    panel.className='scientific-panel';
+    const title=document.createElement('strong');
+    title.textContent={equation:'Equation',table:'Table',figure:'Figure',list:'List'}[model.type];
+    panel.append(title);
+    const inputs=[];
+    function field(index) {
+      const data=model.fields[index], label=document.createElement('label');
+      const input=document.createElement(model.type==='equation'?'textarea':'input');
+      input.value=data.value; input.setAttribute('aria-label',data.name);
+      input.spellcheck=false;
+      if (model.type==='equation') input.rows=3;
+      label.append(input);
+      inputs[index]=input;
+      return label;
+    }
+    if (model.type==='table') {
+      const wrap=document.createElement('div'); wrap.className='scientific-table-scroll';
+      const table=document.createElement('table'), body=document.createElement('tbody');
+      for (const row of model.rows) {
+        const tr=document.createElement('tr');
+        for (const i of row) { const td=document.createElement('td'); td.append(field(i)); tr.append(td); }
+        body.append(tr);
+      }
+      table.append(body); wrap.append(table); panel.append(wrap);
+    } else {
+      for (let i=0;i<model.fields.length;i++) {
+        const row=document.createElement('div'); row.className='scientific-field';
+        const name=document.createElement('span'); name.textContent=model.fields[i].name;
+        row.append(name,field(i)); panel.append(row);
+      }
+    }
+    if (model.type==='equation') {
+      const preview=document.createElement('div'); preview.className='math-linear-preview';
+      const symbols={alpha:'α',beta:'β',gamma:'γ',delta:'δ',theta:'θ',lambda:'λ',mu:'μ',pi:'π',sigma:'σ',omega:'ω',sum:'∑',int:'∫',times:'×',cdot:'·',pm:'±',leq:'≤',geq:'≥',neq:'≠',infty:'∞'};
+      const render=()=>{preview.textContent='Linear preview: '+inputs[0].value.trim().replace(/\\([A-Za-z]+)/g,(m,k)=>symbols[k]??m);};
+      inputs[0].addEventListener('input',render); render(); panel.append(preview);
+    }
+    host.append(panel);
+    return {panel, inputs};
+  }
+  globalThis.PaperColabEditors = { visual, source, scientificFields, undo: editor => runHistory(editor, E.undo), redo: editor => runHistory(editor, E.redo),
     canUndo: editor => E.undo(editor.state), canRedo: editor => E.redo(editor.state) };
 })();

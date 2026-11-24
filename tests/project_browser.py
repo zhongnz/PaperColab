@@ -101,6 +101,32 @@ def exercise(browser, port, width):
         expect(second_prose).to_contain_text("Remote")
         expect(second_prose).not_to_contain_text("Local draft")
         second.close()
+        page.get_by_role("button", name="Cells", exact=True).click()
+        cells=page.locator("#hosted-cells")
+        heading=cells.locator(".cell-heading").first
+        paragraph=cells.locator(".cell-paragraph").first
+        expect(heading.locator(".visual-prose")).to_contain_text("Sampling method")
+        heading.locator(".visual-prose").click()
+        heading.locator(".visual-prose").press("Control+Home")
+        page.keyboard.insert_text("Revised ")
+        paragraph.locator(".visual-prose").click()
+        paragraph.locator(".visual-prose").press("Control+Home")
+        page.keyboard.insert_text("Independent ")
+        expect(page.locator("#hosted-draft-count")).to_have_text("2 unsaved cells")
+        heading.get_by_role("button", name="Save cell", exact=True).click()
+        expect(page.locator("#hosted-draft-count")).to_have_text("1 unsaved cell")
+        expect(paragraph.locator(".visual-prose")).to_contain_text("Independent")
+        paragraph.get_by_role("button", name="Save cell", exact=True).click()
+        expect(page.locator("#hosted-draft-count")).to_have_text("0 unsaved cells")
+        page.get_by_role("button", name="Document", exact=True).click()
+        expect(heading.locator(".visual-prose")).to_contain_text("Revised")
+        expect(paragraph.locator(".visual-prose")).to_contain_text("Independent")
+        table=cells.locator(".scientific-panel").filter(has=page.locator("table")).first
+        expect(table.get_by_role("textbox",name="Row 2, column 2",exact=True)).to_have_value("4")
+        table.get_by_role("textbox",name="Row 2, column 2",exact=True).fill("8")
+        table.locator("..").locator("..").get_by_role("button",name="Save cell",exact=True).click()
+        expect(table.get_by_role("textbox",name="Row 2, column 2",exact=True)).to_have_value("8")
+        page.get_by_role("button", name="Focused", exact=True).click()
     page.close()
     assert not errors, errors
 
