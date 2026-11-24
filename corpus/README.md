@@ -86,3 +86,9 @@ shared browser parser/export model, not twenty real browser sessions or hosted
 collaboration tests. The existing browser tests separately exercise real UI.
 
 Coverage percentage applies only to classified paragraph ranges in inspected files; full-file parser fallbacks and unreadable sources can remain uncounted. The aggregate report makes this limitation explicit. The new multi-file fixture tests the same target and round-trip commands, including rejection of unreachable files.
+
+## First complete benchmark and targeted improvements
+
+The first full run (690a9be, 24 November 2026, [CI record](https://github.com/zhongnz/PaperColab/actions/runs/45424196170)) acquired all twenty sources: 8 passed, 8 failed original-source compilation, 2 had unresolved roots, and 2 compiled but had no editable paragraph. Classified paragraph coverage was 33.1% across 18 inspected papers. All eight papers that reached an edited build passed. This is not evidence of broad compatibility. PPO v1 is a PDF-inclusion wrapper; a visual LaTeX editor cannot recover the absent editable manuscript from that wrapper. The other no-editable case (diffusion) needs parser investigation. Multiple candidate roots in MAML and BART require inspection; no filename-based guesses are made.
+
+Next reports classify build errors using a fixed diagnostic vocabulary, include root-candidate coverage and full-file parser fallback reasons, and count whole-file fallbacks separately. Diagnostic classification is heuristic; inspect original logs locally when necessary. Expanded protected one-brace citation variants and conservative literal HTTP(S) URL tokens improve supported prose without expanding custom macros, optional arguments or comment-containing ranges. Untouched source remains authoritative. No paper is replaced to improve the denominator, and no build safety controls are relaxed. Re-run the same corpus to measure the change.

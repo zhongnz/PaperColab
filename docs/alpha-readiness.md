@@ -80,3 +80,5 @@ visual edit, outside-span byte checks, source-mode re-import check, isolated
 edited PDF build and visible marker. Source acquisition and template/toolchain
 failures remain visible rather than being excluded from the denominator.
 Until a complete report reaches the gate, broad LaTeX compatibility is unverified.
+
+First full fidelity run: 8/20 (40%), 20/20 acquired, 8 original-build failures, 2 ambiguous roots, 2 no-editable-paragraph cases, 33.1% classified paragraph coverage. Gate not met. All eligible edited round-trips passed, but this is a narrow single-paragraph trial. See the linked run in corpus/README.md. Next run adds build error categories and full-file fallback reasons; no relaxation of isolated compilation or source preservation.

@@ -28,11 +28,36 @@ def sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def build_diagnostic(text):
+    """Return a fixed diagnostic category, never arbitrary TeX log content."""
+    text = text.lower()
+    patterns = (
+        ("missing-bibliography-data", r"i couldn't open database file|couldn't open style file|no file .{0,160}\.bbl|bibtex.{0,80}(?:failed|error)"),
+        ("missing-file", r"(?:latex|package .{0,80}) error: file .{0,200}not found|i can't find file|file .{0,200}not found"),
+        ("shell-escape-required", r"shell.escape|write18|pygmentize"),
+        ("font-or-engine", r"fontspec error|requires.{0,100}(?:xelatex|lualatex)|font .{0,100}not found"),
+        ("undefined-control-sequence", r"undefined control sequence"),
+        ("resource-or-time-limit", r"exceeded the 120-second limit|capacity exceeded|out of memory|oom killed"),
+        ("unsafe-archive", r"unsafe or conflicting archive path|special file|unsupported archive|exceeds 256 mib"),
+        ("latex-error", r"latex error|package .{0,100} error|fatal error"),
+    )
+    for code, pattern in patterns:
+        if re.search(pattern,text):
+            return code
+    return "unclassified"
+
+
+class CommandFailure(RuntimeError):
+    def __init__(self, returncode, diagnostic):
+        super().__init__("command failed (" + str(returncode) + ")")
+        self.diagnostic = diagnostic
+
+
 def run(args, timeout=180):
     result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=timeout)
     if result.returncode:
-        raise RuntimeError("command failed (" + str(result.returncode) + ")")
+        raise CommandFailure(result.returncode,build_diagnostic(result.stderr[-32000:]))
     return result.stdout
 
 
@@ -132,6 +157,7 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
         stage="inventory"
         report=json.loads(run(["node","corpus/check.cjs",str(archive)],timeout=90))
         result["roots"]=[x["root"] for x in report["roots"]]
+        result["root_candidates"]=[{"root":x["root"],"coverage":x["coverage"],"counts":x["counts"]} for x in report["roots"]]
         selected=root_for(report,override)
         if not selected:
             result["status"]="root-unresolved"
@@ -174,6 +200,9 @@ def benchmark(index, paper, base, emcee=None, override=None, image=None):
         if stage=="baseline-build":result["baseline"]="fail"
         if stage=="editor-roundtrip":result["roundtrip"]="fail"
         if stage=="edited-build":result["edited_build"]="fail"
+        if stage in ("baseline-build","edited-build"):
+            result["build_diagnostic"] = (error.diagnostic if isinstance(error,CommandFailure)
+                else "resource-or-time-limit" if isinstance(error,subprocess.TimeoutExpired) else "unclassified")
         return result
 
 

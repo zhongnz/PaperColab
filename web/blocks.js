@@ -3,7 +3,11 @@
   'use strict';
   const headingNames = new Set(['section', 'subsection', 'subsubsection']);
   const standalone = new Set(['maketitle', 'tableofcontents', 'appendix', 'clearpage', 'newpage', 'frontmatter', 'mainmatter', 'backmatter']);
-  const inlineRefs = new Set(['cite', 'citep', 'citet', 'ref', 'eqref', 'pageref']);
+  // Keep recognised single-brace reference commands as opaque, ordered
+  // tokens. Do not expand project macros or infer optional arguments.
+  const inlineRefs = new Set(['cite', 'citep', 'citet', 'citealt', 'citealp',
+    'citeauthor', 'citeyear', 'citeyearpar', 'citetalias', 'citepalias',
+    'ref', 'eqref', 'pageref', 'autoref', 'nameref', 'cref', 'Cref']);
   const marks = { textbf: 'bold', emph: 'italic', textit: 'italic' };
   const escaped = { '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}', '\u00a0': '~' };
   for (const ch of '#$%&_{}') escaped[ch] = '\\' + ch;
@@ -78,7 +82,8 @@
           child.marks = [...existing, mark].sort((a, b) => a.type.localeCompare(b.type));
           append(child);
         }
-      } else if (inlineRefs.has(name) && /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(raw(next))) {
+      } else if ((inlineRefs.has(name) && /^\{[A-Za-z0-9_.:/,+\s-]+\}$/.test(raw(next))) ||
+                 (name === 'url' && /^\{https?:\/\/[A-Za-z0-9.\-/:?=+_~#]+\}$/.test(raw(next)))) {
         append({ type: 'texToken', attrs: { latex: slice(node.position.start.offset, next.position.end.offset) } });
       } else return fail(name);
       i++;
@@ -484,6 +489,10 @@
     };
     const commands = new Map();
     for (const block of file.blocks) {
+      if (block.reason) {
+        report.fullFileFallback = true;
+        report.fullFileReason = block.reason;
+      }
       if (block.kind === 'paragraph') report.editableParagraphs++;
       else if (block.kind === 'heading') report.editableHeadings++;
       else if (block.fallback === 'paragraph') report.fallbackParagraphs++;

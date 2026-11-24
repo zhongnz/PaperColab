@@ -12,7 +12,7 @@ const coverageKeys = ['editableParagraphs', 'editableHeadings', 'fallbackParagra
 
 function blankCoverage() {
   return { editableParagraphs: 0, editableHeadings: 0, fallbackParagraphs: 0, fallbackHeadings: 0,
-    preservedBlocks: 0, editableBlocks: 0, fallbackCommands: [], uninspectedSources: [] };
+    preservedBlocks: 0, editableBlocks: 0, fallbackCommands: [], uninspectedSources: [], fullFileFallbacks: [] };
 }
 
 function addCoverage(total, part) {
@@ -31,7 +31,9 @@ function manuscriptCoverage(data, root, sources) {
     if (!/\.(?:tex|ltx)$/i.test(source)) continue;
     const text = data.files.get(source)?.text;
     if (typeof text !== 'string') { total.uninspectedSources.push(source); continue; }
-    addCoverage(total, PaperColabBlocks.coverage(PaperColabBlocks.parseFile(text, { root: source === root })));
+    const report = PaperColabBlocks.coverage(PaperColabBlocks.parseFile(text, { root: source === root }));
+    addCoverage(total, report);
+    if (report.fullFileFallback) total.fullFileFallbacks.push({source, reason: report.fullFileReason});
   }
   return total;
 }

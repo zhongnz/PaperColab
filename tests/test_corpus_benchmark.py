@@ -6,7 +6,7 @@ import subprocess
 import shutil
 import zipfile
 import unittest
-from corpus.benchmark import MANIFEST, root_for, marker_present, valid_source
+from corpus.benchmark import MANIFEST, root_for, marker_present, valid_source, build_diagnostic
 from corpus.summarize import summarize
 
 
@@ -72,3 +72,14 @@ class CorpusBenchmarkTests(unittest.TestCase):
             bad=subprocess.run(["node","corpus/roundtrip.cjs",str(source),"main.tex",str(base/"bad.zip"),"unrelated.tex"],
                                cwd=repo,capture_output=True,text=True,timeout=30)
             self.assertNotEqual(bad.returncode,0)
+
+    def test_build_diagnostics_do_not_return_log_content(self):
+        cases=[
+            ("I couldn't open database file confidential.bib","missing-bibliography-data"),
+            ("! LaTeX Error: File confidential.sty not found.","missing-file"),
+            ("Package fontspec Error: requires XeLaTeX","font-or-engine"),
+            ("Undefined control sequence.","undefined-control-sequence"),
+            ("Build interrupted or exceeded the 120-second limit.","resource-or-time-limit"),
+            ("some manuscript content","unclassified")]
+        for message,expected in cases:
+            self.assertEqual(build_diagnostic(message),expected)

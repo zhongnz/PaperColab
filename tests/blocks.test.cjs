@@ -278,3 +278,19 @@ test('local raster preview resolves only explicit archive assets and reads bound
   await assert.rejects(()=>A.readRaster(blob,'project/figures/a.svg'),/Only PNG/);
   assert.strictEqual(await A.exportArchive(blob,new Map()),blob);
 });
+
+test('single-argument citation variants and literal URLs remain protected through visual edits', () => {
+  const source = 'See \\citealt{a}, \\citetalias{b}, \\cref{sec:test} and \\url{https://example.org/paper_1}.';
+  const file = B.parseFile(source), p = file.blocks[0];
+  assert.equal(p.kind,'paragraph');
+  assert.deepEqual(B.tokens(p.rich),['\\citealt{a}','\\citetalias{b}','\\cref{sec:test}','\\url{https://example.org/paper_1}']);
+  B.editVisual(file,p,append(p.rich,' Extra.'));
+  assert.equal(B.exportText(file),source+' Extra.');
+  assert.deepEqual(B.tokens(B.parseFile(B.exportText(file)).blocks[0].rich),B.tokens(p.rich));
+  for(const unsafe of ['\\citealt[see]{a}','\\citealt{\\macro}','\\url{https://example.org/a%20b}','\\custom{a}']){
+    assert.equal(B.parseFile('See '+unsafe+'.').blocks[0].kind,'raw');
+  }
+  const raw=B.coverage(B.parseFile('\\iftrue unsafe\\fi'));
+  assert.equal(raw.fullFileFallback,true);
+  assert.match(raw.fullFileReason,/conditional|delimiter/i);
+});

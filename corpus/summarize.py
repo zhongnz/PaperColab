@@ -26,15 +26,21 @@ def summarize(rows, papers):
     counts={}
     for row in rows:
         counts[row["status"]]=counts.get(row["status"],0)+1
+    diagnostics={}
+    for row in rows:
+        if row.get("build_diagnostic"):
+            key=row["build_diagnostic"]
+            diagnostics[key]=diagnostics.get(key,0)+1
     inspected=[r["coverage"] for r in rows if r.get("coverage")]
     editable=sum(c["editableParagraphs"] for c in inspected)
     fallback=sum(c["fallbackParagraphs"] for c in inspected)
     return {"papers":20,"passed":counts.get("pass",0),"gate_met":counts.get("pass",0)>=18,
-            "status_counts":counts,"coverage_papers":len(inspected),
+            "status_counts":counts,"build_diagnostics":diagnostics,"coverage_papers":len(inspected),
             "editable_paragraphs":editable,"fallback_paragraphs":fallback,
             "paragraph_coverage":editable/(editable+fallback) if editable+fallback else None,
             "coverage_note":"Among classified paragraph ranges in inspected sources only; full-file fallbacks and unreadable sources may be uncounted.",
-            "uninspected_sources":sum(len(c.get("uninspectedSources",[])) for c in inspected)}
+            "uninspected_sources":sum(len(c.get("uninspectedSources",[])) for c in inspected),
+            "full_file_fallbacks":sum(len(c.get("fullFileFallbacks",[])) for c in inspected)}
 
 
 def main():
